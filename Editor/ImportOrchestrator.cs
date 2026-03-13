@@ -109,7 +109,7 @@ namespace Plyground.Editor
 			_progress("Importing game items (BigGameLoader)...", 0.72f);
 
 			var preprocess = new List<PostProcessNode>(); // keep empty for now, wire UI later if needed
-			await BigGameLoader.Load(
+			await PlygroundLoader.Load(
 				info.gameItemPath,
 				info.buildFilePath,
 				info.modulePath,
