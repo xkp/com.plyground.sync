@@ -1,0 +1,9 @@
+{
+  "name": "Plyground.Loader.Editor",
+  "references": [
+    "Plyground.Loader.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ]
+}

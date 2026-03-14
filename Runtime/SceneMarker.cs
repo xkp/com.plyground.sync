@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Plyground.Editor
+namespace Plyground.Loader
 {
     public sealed class SceneMarker : MonoBehaviour
     {
