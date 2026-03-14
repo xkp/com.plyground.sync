@@ -108,14 +108,14 @@ namespace Plysync.Editor
 			_linkedRevision = null;
 			_linkedSyncInfo = null;
 
-			if (EnvironmentImporter.TryGetMarker(out var marker) && !string.IsNullOrWhiteSpace(marker.gameId))
-			{
-				_linkedGameId = marker.gameId;
-				_linkedRevision = marker.revision;
+			// if (EnvironmentImporter.TryGetMarker(out var marker) && !string.IsNullOrWhiteSpace(marker.gameId))
+			// {
+			// 	_linkedGameId = marker.gameId;
+			// 	_linkedRevision = marker.revision;
 
-				// Load cached SyncBuildInfo (paths) for this gameId
-				_linkedSyncInfo = _cache.LoadSyncInfo(marker.gameId);
-			}
+			// 	// Load cached SyncBuildInfo (paths) for this gameId
+			// 	_linkedSyncInfo = _cache.LoadSyncInfo(marker.gameId);
+			// }
 		}
 
 		private void OnGUI()

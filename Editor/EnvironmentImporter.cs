@@ -53,7 +53,7 @@ namespace Plyground.Editor
 			);
 
 			// Mark scene as linked/imported
-			EnsureMarker(gameId, revision, info, log);
+			//EnsureMarker(gameId, revision, info, log);
 
 			EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 			AssetDatabase.SaveAssets();
