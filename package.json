@@ -1,6 +1,6 @@
 {
     "name": "ai.plyground.sync",
-    "version": "0.4.2",
+    "version": "0.4.3",
     "displayName": "Plyground Sync",
     "description": "Sync plyground games",
     "unity": "2020.3",
