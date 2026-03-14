@@ -60,33 +60,33 @@ namespace Plyground.Editor
 			AssetDatabase.Refresh();
 		}
 
-		public static bool TryGetMarker(out SceneMarker marker)
-		{
-			marker = UnityEngine.Object.FindFirstObjectByType<SceneMarker>();
-			return marker != null;
-		}
+		// public static bool TryGetMarker(out SceneMarker marker)
+		// {
+		// 	marker = UnityEngine.Object.FindFirstObjectByType<SceneMarker>();
+		// 	return marker != null;
+		// }
 
-		private static void EnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
-		{
-			if (!TryGetMarker(out var marker))
-			{
-				var go = new GameObject(MarkerName);
-				marker = go.AddComponent<SceneMarker>();
-				log?.Invoke("Created Plyground marker.");
-			}
+		// private static void EnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
+		// {
+		// 	if (!TryGetMarker(out var marker))
+		// 	{
+		// 		var go = new GameObject(MarkerName);
+		// 		marker = go.AddComponent<SceneMarker>();
+		// 		log?.Invoke("Created Plyground marker.");
+		// 	}
 
-			marker.gameId = gameId;
-			marker.revision = revision ?? "unknown";
+		// 	marker.gameId = gameId;
+		// 	marker.revision = revision ?? "unknown";
 
-			// Persist sync/list data so we can operate offline
-			marker.environmentPath = info.environmentPath;
-			marker.gameItemPath = info.gameItemPath;
-			marker.buildFilePath = info.buildFilePath;
-			marker.modulePath = info.modulePath;
-			marker.assetPath = info.assetPath;
+		// 	// Persist sync/list data so we can operate offline
+		// 	marker.environmentPath = info.environmentPath;
+		// 	marker.gameItemPath = info.gameItemPath;
+		// 	marker.buildFilePath = info.buildFilePath;
+		// 	marker.modulePath = info.modulePath;
+		// 	marker.assetPath = info.assetPath;
 
-			EditorUtility.SetDirty(marker);
-		}
+		// 	EditorUtility.SetDirty(marker);
+		// }
 
 		private static string ResolveInputFolder(string environmentPath)
 		{

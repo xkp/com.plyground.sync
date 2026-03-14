@@ -78,7 +78,7 @@ namespace Plyground.Editor
 			{
 				_log($"No changes. revision={revision}");
 				// still ensure marker has the latest paths
-				UpsertSceneMarker(gameId, revision, info);
+				//UpsertSceneMarker(gameId, revision, info);
 				return;
 			}
 
@@ -135,36 +135,36 @@ namespace Plyground.Editor
 			});
 
 			// Ensure marker always has paths + timestamps
-			UpsertSceneMarker(gameId, revision, info);
+			//UpsertSceneMarker(gameId, revision, info);
 
 			_progress("Done.", 1f);
 		}
 
-		private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)
-		{
-			if (!EnvironmentImporter.TryGetMarker(out var marker) || marker == null)
-			{
-				// If your marker is created by EnvironmentImporter, this will usually exist.
-				// But this is a safety net.
-				var go = new GameObject("PlygroundMarker");
-				marker = go.AddComponent<SceneMarker>();
-			}
+		// private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)
+		// {
+		// 	if (!EnvironmentImporter.TryGetMarker(out var marker) || marker == null)
+		// 	{
+		// 		// If your marker is created by EnvironmentImporter, this will usually exist.
+		// 		// But this is a safety net.
+		// 		var go = new GameObject("PlygroundMarker");
+		// 		marker = go.AddComponent<SceneMarker>();
+		// 	}
 
-			marker.gameId = gameId;
-			marker.revision = revision ?? "unknown";
-			marker.localServerBaseUrl = _local?.BaseUrl;
-			marker.importedAtUtc = DateTime.UtcNow.ToString("o");
+		// 	marker.gameId = gameId;
+		// 	marker.revision = revision ?? "unknown";
+		// 	marker.localServerBaseUrl = _local?.BaseUrl;
+		// 	marker.importedAtUtc = DateTime.UtcNow.ToString("o");
 
-			// Paths from /sync/list (THIS was missing)
-			marker.syncRootPath = info.path;
-			marker.environmentPath = info.environmentPath;
-			marker.gameItemPath = info.gameItemPath;
-			marker.buildFilePath = info.buildFilePath;
-			marker.modulePath = info.modulePath;
-			marker.assetPath = info.assetPath;
+		// 	// Paths from /sync/list (THIS was missing)
+		// 	marker.syncRootPath = info.path;
+		// 	marker.environmentPath = info.environmentPath;
+		// 	marker.gameItemPath = info.gameItemPath;
+		// 	marker.buildFilePath = info.buildFilePath;
+		// 	marker.modulePath = info.modulePath;
+		// 	marker.assetPath = info.assetPath;
 
-			EditorUtility.SetDirty(marker);
-		}
+		// 	EditorUtility.SetDirty(marker);
+		// }
 
 		private static string[] ExtractModuleIds(BuildJson buildJson)
 		{

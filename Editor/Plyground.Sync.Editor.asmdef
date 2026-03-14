@@ -1,9 +1,0 @@
-{
-  "name": "Plyground.Sync.Editor",
-  "references": [
-    "Plyground.Sync.Runtime"
-  ],
-  "includePlatforms": [
-    "Editor"
-  ]
-}
