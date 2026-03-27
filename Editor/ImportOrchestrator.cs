@@ -23,7 +23,7 @@ namespace Plyground.Editor
 
 		public ImportOrchestrator(PlysyncClient local, CacheStore cache, Action<string> log, Action<string, float> progress)
 		{
-			_local = local;
+			_local = local ?? new PlysyncClient(log);
 			_cache = cache;
 			_log = log ?? (_ => { });
 			_progress = progress ?? ((_, __) => { });
@@ -60,7 +60,7 @@ namespace Plyground.Editor
 				_log($"Resolved {moduleIds.Length} module id(s) from build.json.");
 				_progress("Resolving packages from modules...", 0.10f);
 
-				var resolvedPackages = await _local.ResolvePackagesForModules(moduleIds, ct);
+				var resolvedPackages = _local.ResolvePackagesForModules(moduleIds, ct);
 				packages = MergePackages(packages, resolvedPackages);
 			}
 			else if (moduleIds.Length > 0)
@@ -172,6 +172,7 @@ namespace Plyground.Editor
 
 			var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+			AddRange(ids, new string[] { buildJson.selectedGame });
 			AddRange(ids, buildJson.selectedCharacters);
 			AddRange(ids, buildJson.selectedNature);
 			AddRange(ids, buildJson.selectedProps);

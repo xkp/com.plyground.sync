@@ -50,7 +50,7 @@ namespace Plysync.Editor
 			{
 				pkgs.value = pkgs.value
 					.Where(p => p != null)
-					.OrderBy(p => !p.Contains("plyground"))
+					.OrderBy(p => p.Contains("plyground"))
 					.ToArray();
 			}
 		}
