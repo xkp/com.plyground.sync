@@ -12,35 +12,39 @@ using UnityEditor.PackageManager.Requests;
 using UnityEngine;
 using UnityEngine.Networking;
 
-namespace Plysync.Editor
-{
-	public static class PackageInstaller
+	namespace Plysync.Editor
 	{
-		public static async Task Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
+		public static class PackageInstaller
 		{
-			if (pkgs == null)
+			public static async Task<bool> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
 			{
-				log("No packages block provided.");
-				return;
-			}
+				if (pkgs == null)
+				{
+					log("No packages block provided.");
+					return false;
+				}
 
-			SortInPlace(pkgs);
-			var changed = false;
+				SortInPlace(pkgs);
+				var changed = false;
+				log($"Package installer received {pkgs.value?.Length ?? 0} package path(s).");
 
-			//if (pkgs.upm != null && pkgs.upm.Length > 0)
-			//{
-			//	changed |= await InstallUpmPackages(pkgs.upm, log, ct);
+				//if (pkgs.upm != null && pkgs.upm.Length > 0)
+				//{
+				//	changed |= await InstallUpmPackages(pkgs.upm, log, ct);
 			//}
 			if (pkgs.value != null && pkgs.value.Length > 0)
 			{
 				changed |= await InstallUnityPackages(pkgs.value, log, ct);
 			}
 
-			if (changed)
-			{
-				await RebuildTypes(log, ct);
+				if (changed)
+				{
+					await RebuildTypes(log, ct);
+				}
+
+				log(changed ? "Package install changed the project." : "Package install found no changes.");
+				return changed;
 			}
-		}
 
 		private static void SortInPlace(PackagesBlock pkgs)
 		{
@@ -105,11 +109,13 @@ namespace Plysync.Editor
 
 		private static async Task<bool> InstallUnityPackages(string[] packages, Action<string> log, CancellationToken ct)
 		{
-			var changed = false;
-			foreach (var pkg in packages)
-			{
-				ct.ThrowIfCancellationRequested();
-				if (pkg == null) continue;
+				var changed = false;
+				foreach (var pkg in packages)
+				{
+					ct.ThrowIfCancellationRequested();
+					if (pkg == null) continue;
+					if (!File.Exists(pkg))
+						throw new FileNotFoundException("Unity package file was not found.", pkg);
 
 				//var identity = GetUnityPackageIdentity(pkg);
 				//var fingerprint = GetUnityPackageFingerprint(pkg);
@@ -129,24 +135,25 @@ namespace Plysync.Editor
 				//	continue;
 				//}
 
-				var localPath = pkg; // await ResolveUnityPackageFilePath(pkg, log, ct);
-				//VerifyUnityPackageHash(pkg, localPath, log);
+					var localPath = pkg; // await ResolveUnityPackageFilePath(pkg, log, ct);
+					//VerifyUnityPackageHash(pkg, localPath, log);
 
-				log($"Importing .unitypackage: {Path.GetFileName(localPath)}");
-				AssetDatabase.ImportPackage(localPath, false);
-				AssetDatabase.Refresh();
-				changed = true;
-			}
+					log($"Importing .unitypackage: {Path.GetFileName(localPath)}");
+					AssetDatabase.ImportPackage(localPath, false);
+					AssetDatabase.Refresh();
+					log($"Imported .unitypackage from: {localPath}");
+					changed = true;
+				}
 
-			return changed;
+				return changed;
 		}
 
-		private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
-		{
-			log("Rebuilding types after package install...");
-			AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+			private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
+			{
+				log("Rebuilding types after package install...");
+				AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
 
-			await WaitForEditorToSettle(ct);
+				await WaitForEditorToSettle(ct);
 
 			// Build a name->Type map so later Type.GetType calls are likely to hit warm metadata.
 			var allTypes = TypeCache.GetTypesDerivedFrom<object>();
@@ -159,8 +166,8 @@ namespace Plysync.Editor
 				map[t.Name] = t;
 			}
 
-			log($"Type rebuild complete. Cached {map.Count} names.");
-		}
+				log($"Type rebuild complete. Cached {map.Count} names.");
+			}
 
 		private static async Task WaitForEditorToSettle(CancellationToken ct)
 		{

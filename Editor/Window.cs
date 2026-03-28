@@ -69,6 +69,8 @@ namespace Plysync.Editor
 
 			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
 			_logoTexture = LoadLogoTexture();
+			if (_log.Length == 0)
+				_log.Append(ImportSessionState.LoadLog());
 
 			EditorApplication.delayCall += () =>
 			{
@@ -178,7 +180,11 @@ namespace Plysync.Editor
 			{
 				GUILayout.Label($"Status: {_status}", GUILayout.ExpandWidth(true));
 				GUI.enabled = !_busy;
-				if (GUILayout.Button("Clear Logs", GUILayout.Width(110))) _log.Clear();
+				if (GUILayout.Button("Clear Logs", GUILayout.Width(110)))
+				{
+					_log.Clear();
+					ImportSessionState.ClearLog();
+				}
 				GUI.enabled = true;
 			}
 		}
@@ -430,6 +436,14 @@ namespace Plysync.Editor
 			_cloudBaseUrl = (_cloudBaseUrl ?? "").Trim().TrimEnd('/');
 			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
 
+			if (ImportSessionState.TryLoadPendingImport(out var pendingImport))
+			{
+				Log($"Resuming pending import after package install: {pendingImport.path}");
+				ImportSessionState.ClearPendingImport();
+				await RunImport(pendingImport, "Resume Import");
+				return;
+			}
+
 			await DiscoverTargets();
 
 			if (!string.IsNullOrWhiteSpace(_linkedGameId))
@@ -479,13 +493,17 @@ namespace Plysync.Editor
 		{
 			if (_busy || !_discovered || _selectedIndex < 0 || _targets.Length == 0) return;
 			var info = _targets[_selectedIndex];
+			await RunImport(info, "Import");
+		}
 
+		private async Task RunImport(SyncBuildInfo info, string actionLabel)
+		{
 			_cts = new CancellationTokenSource();
 			var token = _cts.Token;
 
 			try
 			{
-				BeginBusy($"Import: {info.path}");
+				BeginBusy($"{actionLabel}: {info.path}");
 
 				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
 				await orchestrator.Run(info, token);
@@ -499,15 +517,18 @@ namespace Plysync.Editor
 
 				_status = "Imported";
 				Log("Import complete. Project is now linked.");
+				ImportSessionState.ClearPendingImport();
 				ScaffoldInboxCheck();
 			}
 			catch (OperationCanceledException)
 			{
 				Log("Import cancelled.");
+				ImportSessionState.ClearPendingImport();
 			}
 			catch (Exception e)
 			{
 				Log("Import failed: " + e);
+				ImportSessionState.ClearPendingImport();
 			}
 			finally
 			{
@@ -709,6 +730,7 @@ namespace Plysync.Editor
 		{
 			_log.AppendLine($"[{DateTime.Now:HH:mm:ss}] {msg}");
 			if (_log.Length > 200_000) _log.Remove(0, 50_000);
+			ImportSessionState.SaveLog(_log.ToString());
 			Repaint();
 		}
 

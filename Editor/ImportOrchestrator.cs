@@ -76,8 +76,13 @@ namespace Plyground.Editor
 			// can rely on the required types and assets already being available.
 			if (packages != null)
 			{
+				ImportSessionState.SavePendingImport(info);
+				_log($"Prepared pending import resume state for: {info.path}");
 				_progress("Installing packages...", 0.15f);
-				await PackageInstaller.Install(packages, _log, ct);
+				var packagesChanged = await PackageInstaller.Install(packages, _log, ct);
+				_log(packagesChanged
+					? "Package install completed with project changes. Continuing import."
+					: "Package install completed without project changes.");
 			}
 			else
 			{
@@ -142,6 +147,7 @@ namespace Plyground.Editor
 			//UpsertSceneMarker(gameId, revision, info);
 
 			_progress("Done.", 1f);
+			ImportSessionState.ClearPendingImport();
 		}
 
 		// private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)
@@ -228,6 +234,7 @@ namespace Plyground.Editor
 		private static void OpenMainScene(Action<string> log)
 		{
 			var activeScene = EditorSceneManager.GetActiveScene();
+			log?.Invoke($"Active scene before switch: name='{activeScene.name}' path='{activeScene.path}'");
 			if (IsPreferredMainSceneName(activeScene.name))
 			{
 				log?.Invoke($"Main scene already open: {activeScene.path}");
@@ -237,14 +244,21 @@ namespace Plyground.Editor
 			var guids = AssetDatabase.FindAssets("t:Scene");
 			if (guids == null || guids.Length == 0)
 				throw new Exception("Could not find any scene assets after installing packages.");
+			log?.Invoke($"Scene search found {guids.Length} scene asset(s).");
 
-			var scenePath = guids
+			var candidateScenePaths = guids
 				.Select(AssetDatabase.GUIDToAssetPath)
 				.Where(path => !string.IsNullOrWhiteSpace(path))
 				.Where(path => IsPreferredMainSceneName(System.IO.Path.GetFileNameWithoutExtension(path)))
 				.OrderBy(path => GetMainScenePriority(path))
 				.ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-				.FirstOrDefault();
+				.ToArray();
+
+			log?.Invoke($"Main-scene candidate count: {candidateScenePaths.Length}");
+			foreach (var candidateScenePath in candidateScenePaths.Take(5))
+				log?.Invoke($"Main-scene candidate: {candidateScenePath}");
+
+			var scenePath = candidateScenePaths.FirstOrDefault();
 
 			if (string.IsNullOrWhiteSpace(scenePath))
 				throw new Exception("Could not find a scene named 'MainScene' or 'main' after installing packages.");
