@@ -234,6 +234,10 @@ namespace Plyground.Editor
 
 		private static void OpenMainScene(Action<string> log)
 		{
+			log?.Invoke("Refreshing AssetDatabase before main scene lookup...");
+			AssetDatabase.SaveAssets();
+			AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+
 			var activeScene = EditorSceneManager.GetActiveScene();
 			log?.Invoke($"Active scene before switch: name='{activeScene.name}' path='{activeScene.path}'");
 			if (IsPreferredMainSceneName(activeScene.name))
@@ -258,6 +262,11 @@ namespace Plyground.Editor
 			log?.Invoke($"Main-scene candidate count: {candidateScenePaths.Length}");
 			foreach (var candidateScenePath in candidateScenePaths.Take(5))
 				log?.Invoke($"Main-scene candidate: {candidateScenePath}");
+			if (candidateScenePaths.Length == 0)
+			{
+				foreach (var knownScenePath in guids.Select(AssetDatabase.GUIDToAssetPath).Where(path => !string.IsNullOrWhiteSpace(path)).Take(20))
+					log?.Invoke($"Known scene asset: {knownScenePath}");
+			}
 
 			var scenePath = candidateScenePaths.FirstOrDefault();
 
