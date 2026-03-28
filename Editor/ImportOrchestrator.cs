@@ -76,7 +76,8 @@ namespace Plyground.Editor
 			// can rely on the required types and assets already being available.
 			if (packages != null)
 			{
-				ImportSessionState.SavePendingImport(info);
+				_cache.SaveSyncInfo(info);
+				ImportSessionState.SavePendingImportPath(info.path);
 				_log($"Prepared pending import resume state for: {info.path}");
 				_progress("Installing packages...", 0.15f);
 				var packagesChanged = await PackageInstaller.Install(packages, _log, ct);
@@ -147,7 +148,7 @@ namespace Plyground.Editor
 			//UpsertSceneMarker(gameId, revision, info);
 
 			_progress("Done.", 1f);
-			ImportSessionState.ClearPendingImport();
+			ImportSessionState.ClearPendingImportPath();
 		}
 
 		// private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)

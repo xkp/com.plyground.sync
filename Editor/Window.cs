@@ -436,12 +436,18 @@ namespace Plysync.Editor
 			_cloudBaseUrl = (_cloudBaseUrl ?? "").Trim().TrimEnd('/');
 			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
 
-			if (ImportSessionState.TryLoadPendingImport(out var pendingImport))
+			if (ImportSessionState.TryLoadPendingImportPath(out var pendingImportPath))
 			{
-				Log($"Resuming pending import after package install: {pendingImport.path}");
-				ImportSessionState.ClearPendingImport();
-				await RunImport(pendingImport, "Resume Import");
-				return;
+				if (TryResolvePendingImportInfo(pendingImportPath, out var pendingImport))
+				{
+					Log($"Resuming pending import after package install: {pendingImport.path}");
+					ImportSessionState.ClearPendingImportPath();
+					await RunImport(pendingImport, "Resume Import");
+					return;
+				}
+
+				Log($"Pending import could not be resolved after package install: {pendingImportPath}");
+				ImportSessionState.ClearPendingImportPath();
 			}
 
 			await DiscoverTargets();
@@ -517,18 +523,18 @@ namespace Plysync.Editor
 
 				_status = "Imported";
 				Log("Import complete. Project is now linked.");
-				ImportSessionState.ClearPendingImport();
+				ImportSessionState.ClearPendingImportPath();
 				ScaffoldInboxCheck();
 			}
 			catch (OperationCanceledException)
 			{
 				Log("Import cancelled.");
-				ImportSessionState.ClearPendingImport();
+				ImportSessionState.ClearPendingImportPath();
 			}
 			catch (Exception e)
 			{
 				Log("Import failed: " + e);
-				ImportSessionState.ClearPendingImport();
+				ImportSessionState.ClearPendingImportPath();
 			}
 			finally
 			{
@@ -763,6 +769,24 @@ namespace Plysync.Editor
 				modulePath = marker.modulePath,
 				assetPath = marker.assetPath
 			};
+		}
+
+		private bool TryResolvePendingImportInfo(string pendingImportPath, out SyncBuildInfo info)
+		{
+			info = null;
+			if (string.IsNullOrWhiteSpace(pendingImportPath))
+				return false;
+
+			info = _cache.LoadSyncInfo(pendingImportPath);
+			if (info != null)
+				return true;
+
+			if (LocalSyncDiscovery.TryFindByRoot(pendingImportPath, out info))
+				return true;
+
+			var discovered = LocalSyncDiscovery.Discover(Log);
+			info = discovered.FirstOrDefault(t => string.Equals(t.path, pendingImportPath, StringComparison.OrdinalIgnoreCase));
+			return info != null;
 		}
 
 		private void ScaffoldInboxCheck()

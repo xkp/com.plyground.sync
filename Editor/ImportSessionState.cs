@@ -7,7 +7,7 @@ namespace Plysync.Editor
 	public static class ImportSessionState
 	{
 		private const string LogKey = "Plysync.LogBuffer";
-		private const string PendingImportKey = "Plysync.PendingImport";
+		private const string PendingImportPathKey = "Plysync.PendingImportPath";
 
 		public static string LoadLog()
 		{
@@ -24,38 +24,26 @@ namespace Plysync.Editor
 			SessionState.EraseString(LogKey);
 		}
 
-		public static void SavePendingImport(SyncBuildInfo info)
+		public static void SavePendingImportPath(string path)
 		{
-			if (info == null)
+			if (string.IsNullOrWhiteSpace(path))
 			{
-				ClearPendingImport();
+				ClearPendingImportPath();
 				return;
 			}
 
-			SessionState.SetString(PendingImportKey, JsonUtility.ToJson(info));
+			SessionState.SetString(PendingImportPathKey, path);
 		}
 
-		public static bool TryLoadPendingImport(out SyncBuildInfo info)
+		public static bool TryLoadPendingImportPath(out string path)
 		{
-			info = null;
-			var json = SessionState.GetString(PendingImportKey, "");
-			if (string.IsNullOrWhiteSpace(json))
-				return false;
-
-			try
-			{
-				info = JsonUtility.FromJson<SyncBuildInfo>(json);
-				return info != null && !string.IsNullOrWhiteSpace(info.path);
-			}
-			catch
-			{
-				return false;
-			}
+			path = SessionState.GetString(PendingImportPathKey, "");
+			return !string.IsNullOrWhiteSpace(path);
 		}
 
-		public static void ClearPendingImport()
+		public static void ClearPendingImportPath()
 		{
-			SessionState.EraseString(PendingImportKey);
+			SessionState.EraseString(PendingImportPathKey);
 		}
 	}
 }
