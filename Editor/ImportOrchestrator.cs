@@ -264,8 +264,22 @@ namespace Plyground.Editor
 				log?.Invoke($"Main-scene candidate: {candidateScenePath}");
 			if (candidateScenePaths.Length == 0)
 			{
-				foreach (var knownScenePath in guids.Select(AssetDatabase.GUIDToAssetPath).Where(path => !string.IsNullOrWhiteSpace(path)).Take(20))
+				var knownScenePaths = guids
+					.Select(AssetDatabase.GUIDToAssetPath)
+					.Where(path => !string.IsNullOrWhiteSpace(path))
+					.ToArray();
+
+				foreach (var knownScenePath in knownScenePaths.Take(20))
 					log?.Invoke($"Known scene asset: {knownScenePath}");
+
+				if (knownScenePaths.Length == 1)
+				{
+					var fallbackScenePath = knownScenePaths[0];
+					log?.Invoke($"Falling back to the only available scene asset: {fallbackScenePath}");
+					EditorSceneManager.OpenScene(fallbackScenePath, OpenSceneMode.Single);
+					log?.Invoke($"Opened fallback scene: {fallbackScenePath}");
+					return;
+				}
 			}
 
 			var scenePath = candidateScenePaths.FirstOrDefault();

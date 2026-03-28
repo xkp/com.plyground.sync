@@ -52,9 +52,9 @@ namespace Plyground.Editor
 				postProcess ?? new List<PostProcessNode>()
 			);
 
-			// Mark scene as linked/imported so startup can distinguish
-			// imported projects from first-run import candidates.
-			EnsureMarker(gameId, revision, info, log);
+			// Best-effort marker write. Import should not fail if editor-only
+			// marker attachment is unavailable in the current scene context.
+			TryEnsureMarker(gameId, revision, info, log);
 
 			EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 			AssetDatabase.SaveAssets();
@@ -67,28 +67,41 @@ namespace Plyground.Editor
 			return marker != null;
 		}
 
-		private static void EnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
+		private static void TryEnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
 		{
-			if (!TryGetMarker(out var marker))
+			try
 			{
-				var go = new GameObject(MarkerName);
-				marker = go.AddComponent<SceneMarker>();
-				log?.Invoke("Created Plyground marker.");
+				if (!TryGetMarker(out var marker))
+				{
+					var go = new GameObject(MarkerName);
+					marker = go.AddComponent<SceneMarker>();
+					if (marker == null)
+					{
+						log?.Invoke("Skipping Plyground marker: editor-only SceneMarker could not be attached.");
+						return;
+					}
+
+					log?.Invoke("Created Plyground marker.");
+				}
+
+				marker.gameId = gameId;
+				marker.revision = revision ?? "unknown";
+
+				// Persist sync/list data so we can operate offline
+				marker.syncRootPath = info.path;
+				marker.environmentPath = info.environmentPath;
+				marker.gameItemPath = info.gameItemPath;
+				marker.buildFilePath = info.buildFilePath;
+				marker.modulePath = info.modulePath;
+				marker.assetPath = info.assetPath;
+				marker.importedAtUtc = DateTime.UtcNow.ToString("o");
+
+				EditorUtility.SetDirty(marker);
 			}
-
-			marker.gameId = gameId;
-			marker.revision = revision ?? "unknown";
-
-			// Persist sync/list data so we can operate offline
-			marker.syncRootPath = info.path;
-			marker.environmentPath = info.environmentPath;
-			marker.gameItemPath = info.gameItemPath;
-			marker.buildFilePath = info.buildFilePath;
-			marker.modulePath = info.modulePath;
-			marker.assetPath = info.assetPath;
-			marker.importedAtUtc = DateTime.UtcNow.ToString("o");
-
-			EditorUtility.SetDirty(marker);
+			catch (Exception ex)
+			{
+				log?.Invoke("Skipping Plyground marker due to error: " + ex.Message);
+			}
 		}
 
 		private static string ResolveInputFolder(string environmentPath)
