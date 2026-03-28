@@ -716,7 +716,7 @@ namespace Plysync.Editor
 			return info != null;
 		}
 
-		private static SyncBuildInfo BuildSyncInfoFromMarker(Plyground.Sync.Runtime.SceneMarker marker)
+		private static SyncBuildInfo BuildSyncInfoFromMarker(SceneMarker marker)
 		{
 			if (marker == null || string.IsNullOrWhiteSpace(marker.gameId))
 				return null;
