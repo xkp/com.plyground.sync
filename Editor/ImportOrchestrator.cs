@@ -228,29 +228,50 @@ namespace Plyground.Editor
 		private static void OpenMainScene(Action<string> log)
 		{
 			var activeScene = EditorSceneManager.GetActiveScene();
-			if (string.Equals(activeScene.name, "MainScene", StringComparison.OrdinalIgnoreCase))
+			if (IsPreferredMainSceneName(activeScene.name))
 			{
-				log?.Invoke($"MainScene already open: {activeScene.path}");
+				log?.Invoke($"Main scene already open: {activeScene.path}");
 				return;
 			}
 
-			var guids = AssetDatabase.FindAssets("MainScene t:Scene");
+			var guids = AssetDatabase.FindAssets("t:Scene");
 			if (guids == null || guids.Length == 0)
-				throw new Exception("Could not find a scene named 'MainScene' after installing packages.");
+				throw new Exception("Could not find any scene assets after installing packages.");
 
 			var scenePath = guids
 				.Select(AssetDatabase.GUIDToAssetPath)
 				.Where(path => !string.IsNullOrWhiteSpace(path))
-				.Where(path => string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), "MainScene", StringComparison.OrdinalIgnoreCase))
-				.OrderBy(path => path.StartsWith("Assets/plyground/", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+				.Where(path => IsPreferredMainSceneName(System.IO.Path.GetFileNameWithoutExtension(path)))
+				.OrderBy(path => GetMainScenePriority(path))
 				.ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
 				.FirstOrDefault();
 
 			if (string.IsNullOrWhiteSpace(scenePath))
-				throw new Exception("Found scene search results, but none matched the exact scene name 'MainScene'.");
+				throw new Exception("Could not find a scene named 'MainScene' or 'main' after installing packages.");
 
 			EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
-			log?.Invoke($"Opened MainScene: {scenePath}");
+			log?.Invoke($"Opened main scene: {scenePath}");
+		}
+
+		private static bool IsPreferredMainSceneName(string sceneName)
+		{
+			return string.Equals(sceneName, "MainScene", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(sceneName, "main", StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static int GetMainScenePriority(string path)
+		{
+			if (path.StartsWith("Assets/plyground/", StringComparison.OrdinalIgnoreCase))
+				return 0;
+
+			var sceneName = System.IO.Path.GetFileNameWithoutExtension(path);
+			if (string.Equals(sceneName, "MainScene", StringComparison.OrdinalIgnoreCase))
+				return 1;
+
+			if (string.Equals(sceneName, "main", StringComparison.OrdinalIgnoreCase))
+				return 2;
+
+			return 3;
 		}
 
 		private static PackagesBlock MergePackages(PackagesBlock a, PackagesBlock b)

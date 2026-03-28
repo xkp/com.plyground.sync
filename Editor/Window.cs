@@ -14,7 +14,8 @@ namespace Plysync.Editor
 	public class PlysyncWindow : EditorWindow
 	{
 		private const string DefaultCloudBaseUrl = "https://api.yourcloud.com"; // change
-		private const string DefaultLogoAssetPath = "Assets/plyground/Editor/plysync/logo.png";
+		private const string DefaultLogoAssetPath = "Assets/plyground/Editor/logo.png";
+		private const string PackageLogoAssetPath = "Packages/ai.plyground.sync/Editor/logo.png";
 
 		private enum UiState
 		{
@@ -217,11 +218,21 @@ namespace Plysync.Editor
 			var direct = AssetDatabase.LoadAssetAtPath<Texture2D>(DefaultLogoAssetPath);
 			if (direct != null) return direct;
 
-			var guids = AssetDatabase.FindAssets("logo t:Texture2D", new[] { "Assets/plyground/Editor/plysync" });
+			var packageDirect = AssetDatabase.LoadAssetAtPath<Texture2D>(PackageLogoAssetPath);
+			if (packageDirect != null) return packageDirect;
+
+			var guids = AssetDatabase.FindAssets("logo t:Texture2D", new[] { "Assets/plyground/Editor" });
+			if (guids != null && guids.Length > 0)
+			{
+				var path = AssetDatabase.GUIDToAssetPath(guids[0]);
+				return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+			}
+
+			guids = AssetDatabase.FindAssets("logo t:Texture2D", new[] { "Packages/ai.plyground.sync/Editor" });
 			if (guids == null || guids.Length == 0) return null;
 
-			var path = AssetDatabase.GUIDToAssetPath(guids[0]);
-			return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+			var packagePath = AssetDatabase.GUIDToAssetPath(guids[0]);
+			return AssetDatabase.LoadAssetAtPath<Texture2D>(packagePath);
 		}
 
 		private string BuildGuidanceText(UiState state)
