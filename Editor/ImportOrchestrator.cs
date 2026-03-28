@@ -72,6 +72,18 @@ namespace Plyground.Editor
 				_log("No module ids found in build.json for package resolution.");
 			}
 
+			// Packages must be installed before any import work so downstream importers
+			// can rely on the required types and assets already being available.
+			if (packages != null)
+			{
+				_progress("Installing packages...", 0.15f);
+				await PackageInstaller.Install(packages, _log, ct);
+			}
+			else
+			{
+				_log("No packages block (or build.json missing). Skipping package install.");
+			}
+
 			// Revision-based cache short-circuit (only if we actually have a revision)
 			var cached = _cache.Read(gameId);
 			if (cached != null && revision != "unknown" && cached.lastImportedRevision == revision)
@@ -82,16 +94,8 @@ namespace Plyground.Editor
 				return;
 			}
 
-			// Packages (optional)
-			if (packages != null)
-			{
-				_progress("Installing packages...", 0.15f);
-				await PackageInstaller.Install(packages, _log, ct);
-			}
-			else
-			{
-				_log("No packages block (or build.json missing). Skipping package install.");
-			}
+			_progress("Opening MainScene...", 0.30f);
+			OpenMainScene(_log);
 
 			// Environment import (ThreedeeLoader)
 			_progress("Importing environment (ThreedeeLoader)...", 0.55f);
@@ -219,6 +223,34 @@ namespace Plyground.Editor
 			if (ids == null) return;
 			if (string.IsNullOrWhiteSpace(value)) return;
 			ids.Add(value.Trim());
+		}
+
+		private static void OpenMainScene(Action<string> log)
+		{
+			var activeScene = EditorSceneManager.GetActiveScene();
+			if (string.Equals(activeScene.name, "MainScene", StringComparison.OrdinalIgnoreCase))
+			{
+				log?.Invoke($"MainScene already open: {activeScene.path}");
+				return;
+			}
+
+			var guids = AssetDatabase.FindAssets("MainScene t:Scene");
+			if (guids == null || guids.Length == 0)
+				throw new Exception("Could not find a scene named 'MainScene' after installing packages.");
+
+			var scenePath = guids
+				.Select(AssetDatabase.GUIDToAssetPath)
+				.Where(path => !string.IsNullOrWhiteSpace(path))
+				.Where(path => string.Equals(System.IO.Path.GetFileNameWithoutExtension(path), "MainScene", StringComparison.OrdinalIgnoreCase))
+				.OrderBy(path => path.StartsWith("Assets/plyground/", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+				.ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+				.FirstOrDefault();
+
+			if (string.IsNullOrWhiteSpace(scenePath))
+				throw new Exception("Found scene search results, but none matched the exact scene name 'MainScene'.");
+
+			EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+			log?.Invoke($"Opened MainScene: {scenePath}");
 		}
 
 		private static PackagesBlock MergePackages(PackagesBlock a, PackagesBlock b)

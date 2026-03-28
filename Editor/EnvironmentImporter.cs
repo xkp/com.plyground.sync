@@ -6,6 +6,7 @@ using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using Plyground.Sync.Runtime;
 
 namespace Plyground.Editor
 {
@@ -52,41 +53,44 @@ namespace Plyground.Editor
 				postProcess ?? new List<PostProcessNode>()
 			);
 
-			// Mark scene as linked/imported
-			//EnsureMarker(gameId, revision, info, log);
+			// Mark scene as linked/imported so startup can distinguish
+			// imported projects from first-run import candidates.
+			EnsureMarker(gameId, revision, info, log);
 
 			EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 			AssetDatabase.SaveAssets();
 			AssetDatabase.Refresh();
 		}
 
-		// public static bool TryGetMarker(out SceneMarker marker)
-		// {
-		// 	marker = UnityEngine.Object.FindFirstObjectByType<SceneMarker>();
-		// 	return marker != null;
-		// }
+		public static bool TryGetMarker(out SceneMarker marker)
+		{
+			marker = UnityEngine.Object.FindFirstObjectByType<SceneMarker>();
+			return marker != null;
+		}
 
-		// private static void EnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
-		// {
-		// 	if (!TryGetMarker(out var marker))
-		// 	{
-		// 		var go = new GameObject(MarkerName);
-		// 		marker = go.AddComponent<SceneMarker>();
-		// 		log?.Invoke("Created Plyground marker.");
-		// 	}
+		private static void EnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
+		{
+			if (!TryGetMarker(out var marker))
+			{
+				var go = new GameObject(MarkerName);
+				marker = go.AddComponent<SceneMarker>();
+				log?.Invoke("Created Plyground marker.");
+			}
 
-		// 	marker.gameId = gameId;
-		// 	marker.revision = revision ?? "unknown";
+			marker.gameId = gameId;
+			marker.revision = revision ?? "unknown";
 
-		// 	// Persist sync/list data so we can operate offline
-		// 	marker.environmentPath = info.environmentPath;
-		// 	marker.gameItemPath = info.gameItemPath;
-		// 	marker.buildFilePath = info.buildFilePath;
-		// 	marker.modulePath = info.modulePath;
-		// 	marker.assetPath = info.assetPath;
+			// Persist sync/list data so we can operate offline
+			marker.syncRootPath = info.path;
+			marker.environmentPath = info.environmentPath;
+			marker.gameItemPath = info.gameItemPath;
+			marker.buildFilePath = info.buildFilePath;
+			marker.modulePath = info.modulePath;
+			marker.assetPath = info.assetPath;
+			marker.importedAtUtc = DateTime.UtcNow.ToString("o");
 
-		// 	EditorUtility.SetDirty(marker);
-		// }
+			EditorUtility.SetDirty(marker);
+		}
 
 		private static string ResolveInputFolder(string environmentPath)
 		{

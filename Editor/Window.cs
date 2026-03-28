@@ -108,14 +108,25 @@ namespace Plysync.Editor
 			_linkedRevision = null;
 			_linkedSyncInfo = null;
 
-			// if (EnvironmentImporter.TryGetMarker(out var marker) && !string.IsNullOrWhiteSpace(marker.gameId))
-			// {
-			// 	_linkedGameId = marker.gameId;
-			// 	_linkedRevision = marker.revision;
+			if (EnvironmentImporter.TryGetMarker(out var marker) && !string.IsNullOrWhiteSpace(marker.gameId))
+			{
+				_linkedGameId = marker.gameId;
+				_linkedRevision = marker.revision;
+				_linkedSyncInfo = BuildSyncInfoFromMarker(marker) ?? _cache.LoadSyncInfo(marker.gameId);
+				return;
+			}
 
-			// 	// Load cached SyncBuildInfo (paths) for this gameId
-			// 	_linkedSyncInfo = _cache.LoadSyncInfo(marker.gameId);
-			// }
+			var lastGameId = _cache.LoadLastGameId();
+			if (string.IsNullOrWhiteSpace(lastGameId))
+				return;
+
+			var cachedSyncInfo = _cache.LoadSyncInfo(lastGameId);
+			if (cachedSyncInfo == null)
+				return;
+
+			_linkedGameId = lastGameId;
+			_linkedRevision = ResolveRevisionFromSyncInfo(cachedSyncInfo);
+			_linkedSyncInfo = cachedSyncInfo;
 		}
 
 		private void OnGUI()
@@ -412,6 +423,7 @@ namespace Plysync.Editor
 
 			if (!string.IsNullOrWhiteSpace(_linkedGameId))
 			{
+				Log($"Linked project detected: {_linkedGameId}");
 				ScaffoldInboxCheck();
 				return;
 			}
@@ -419,8 +431,7 @@ namespace Plysync.Editor
 			if (_targets.Length == 1)
 			{
 				_selectedIndex = 0;
-				Log($"Auto-importing discovered project: {_targets[0].name}");
-				await ImportSelectedTarget();
+				Log($"Unimported Plyground project detected: {_targets[0].name}. Waiting for user to start import.");
 			}
 			else if (_targets.Length > 1)
 			{
@@ -703,6 +714,22 @@ namespace Plysync.Editor
 			var discovered = LocalSyncDiscovery.Discover(Log);
 			info = discovered.FirstOrDefault(t => string.Equals(t.path, _linkedGameId, StringComparison.OrdinalIgnoreCase));
 			return info != null;
+		}
+
+		private static SyncBuildInfo BuildSyncInfoFromMarker(Plyground.Sync.Runtime.SceneMarker marker)
+		{
+			if (marker == null || string.IsNullOrWhiteSpace(marker.gameId))
+				return null;
+
+			return new SyncBuildInfo
+			{
+				path = marker.syncRootPath ?? marker.gameId,
+				environmentPath = marker.environmentPath,
+				gameItemPath = marker.gameItemPath,
+				buildFilePath = marker.buildFilePath,
+				modulePath = marker.modulePath,
+				assetPath = marker.assetPath
+			};
 		}
 
 		private void ScaffoldInboxCheck()
