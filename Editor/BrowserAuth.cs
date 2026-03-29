@@ -47,7 +47,7 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(_baseUrl))
 				throw new Exception("Cloud API base URL is not configured.");
 
-			var prefix = $"http://127.0.0.1:{CallbackPort}/";
+			var prefix = $"http://localhost:{CallbackPort}/";
 			var redirectUri = prefix + "callback/";
 			var state = CreateState();
 			var codeVerifier = CreateCodeVerifier();
