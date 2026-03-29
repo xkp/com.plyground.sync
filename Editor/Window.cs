@@ -247,7 +247,7 @@ namespace Plysync.Editor
 				case UiState.FirstRunImport:
 					return "Current state: this looks like a generated Plyground project that has not been imported yet. What to do: import it now.";
 				case UiState.LinkedProject:
-					return "Current state: this is an imported Plyground project. What to do: sync from disk if needed, or Build & Publish to ship a WebGL build.";
+					return "Current state: this is an imported Plyground project. What to do: sync from disk if needed, then publish through the local Plyground app when you're ready.";
 				default:
 					return $"Current state: {_status}. What to do: follow the action buttons below.";
 			}
@@ -370,6 +370,7 @@ namespace Plysync.Editor
 
 			EditorGUILayout.Space(10);
 			EditorGUILayout.LabelField("Publish (WebGL)", EditorStyles.boldLabel);
+			EditorGUILayout.HelpBox("Publish sends this project's variation ID to the local Plyground app. The Plyground app only needs to be running when you click Publish.", MessageType.Info);
 
 			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
 
