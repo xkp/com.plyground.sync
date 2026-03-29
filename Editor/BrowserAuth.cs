@@ -1,5 +1,7 @@
 #if UNITY_EDITOR
 using System;
+using System.IO;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Net;
 using System.Text;
@@ -60,9 +62,9 @@ namespace Plysync.Editor
 			_log($"Auth state length: {state.Length}");
 			_log($"PKCE verifier length: {codeVerifier.Length}");
 
-			using (var listener = new HttpListener())
+			var listener = new TcpListener(IPAddress.Loopback, CallbackPort);
+			try
 			{
-				listener.Prefixes.Add(prefix);
 				try
 				{
 					listener.Start();
@@ -81,68 +83,61 @@ namespace Plysync.Editor
 				while (true)
 				{
 					ct.ThrowIfCancellationRequested();
-					var context = await GetContext(listener, ct);
-					var request = context.Request;
+					var callback = await GetContext(listener, prefix, ct);
+					var requestUrl = callback.Url;
 					_log("Received browser callback connection.");
-					if (request == null)
-					{
-						_log("Browser callback request was null.");
-						await WriteHtml(context.Response, "Login failed", "The login callback did not include a request.");
-						continue;
-					}
-
-					if (request.Url == null)
+					if (requestUrl == null)
 					{
 						_log("Browser callback URL was null.");
-						await WriteHtml(context.Response, "Login failed", "The login callback URL was missing.");
+						await WriteHtml(callback, "Login failed", "The login callback URL was missing.");
 						continue;
 					}
 
-					_log($"Browser callback URL: {request.Url}");
+					_log($"Browser callback URL: {requestUrl}");
 
-					if (!string.Equals(request.Url.AbsolutePath, "/callback/", StringComparison.OrdinalIgnoreCase) &&
-						!string.Equals(request.Url.AbsolutePath, "/callback", StringComparison.OrdinalIgnoreCase))
+					if (!string.Equals(requestUrl.AbsolutePath, "/callback/", StringComparison.OrdinalIgnoreCase) &&
+						!string.Equals(requestUrl.AbsolutePath, "/callback", StringComparison.OrdinalIgnoreCase))
 					{
-						_log("Ignoring callback on unexpected path: " + request.Url.AbsolutePath);
-						await WriteHtml(context.Response, "Plyground Login", "Waiting for the Plyground login callback...");
+						_log("Ignoring callback on unexpected path: " + requestUrl.AbsolutePath);
+						await WriteHtml(callback, "Plyground Login", "Waiting for the Plyground login callback...");
 						continue;
 					}
 
-					var error = request.QueryString["error"];
+					var error = callback.Query["error"];
 					if (!string.IsNullOrWhiteSpace(error))
 					{
-						var description = request.QueryString["error_description"] ?? error;
+						var description = callback.Query["error_description"] ?? error;
 						_log("Browser login returned error: " + description);
-						await WriteHtml(context.Response, "Login failed", description);
+						await WriteHtml(callback, "Login failed", description);
 						throw new Exception("Browser login failed: " + description);
 					}
 
-					var returnedState = request.QueryString["state"];
+					var returnedState = callback.Query["state"];
 					if (string.IsNullOrWhiteSpace(returnedState) || !string.Equals(returnedState, state, StringComparison.Ordinal))
 					{
 						_log($"Browser callback state mismatch. Expected='{state}' Returned='{returnedState}'");
-						await WriteHtml(context.Response, "Login failed", "The login callback state did not match the original request.");
+						await WriteHtml(callback, "Login failed", "The login callback state did not match the original request.");
 						throw new Exception("Browser login failed: callback state mismatch.");
 					}
 					_log("Browser callback state validated.");
 
 					var token = FirstNonEmpty(
-						request.QueryString["access_token"],
-						request.QueryString["token"],
-						request.QueryString["id_token"]);
+						callback.Query["access_token"],
+						callback.Query["token"],
+						callback.Query["id_token"]);
 
 					if (!string.IsNullOrWhiteSpace(token))
 					{
 						_log($"Browser callback included token directly. Token length={token.Trim().Length}");
-						await WriteHtml(context.Response, "Login complete", "You can close this browser window and return to Unity.");
+						await WriteHtml(callback, "Login complete", "You can close this browser window and return to Unity.");
 						return token.Trim();
 					}
 
-					var code = request.QueryString["code"];
+					var code = callback.Query["code"];
 					if (!string.IsNullOrWhiteSpace(code))
 					{
 						_log($"Browser callback included authorization code. Code length={code.Trim().Length}");
-						await WriteHtml(context.Response, "Login received", "Plyground received your sign-in. You can close this browser window and return to Unity while we finish connecting your account.");
+						await WriteHtml(callback, "Login received", "Plyground received your sign-in. You can close this browser window and return to Unity while we finish connecting your account.");
 						_log("Browser response sent. Starting auth code exchange...");
 						var exchangedToken = await ExchangeCodeForToken(code, redirectUri, codeVerifier, ct);
 						_log($"Auth code exchange completed. Token length={exchangedToken?.Length ?? 0}");
@@ -150,8 +145,18 @@ namespace Plysync.Editor
 					}
 
 					_log("Browser callback did not include a token or code.");
-					await WriteHtml(context.Response, "Login failed", "No token or code was returned to Unity.");
+					await WriteHtml(callback, "Login failed", "No token or code was returned to Unity.");
 					throw new Exception("Browser login failed: callback did not include a token or code.");
+				}
+			}
+			finally
+			{
+				try
+				{
+					listener.Stop();
+				}
+				catch
+				{
 				}
 			}
 		}
@@ -216,7 +221,14 @@ namespace Plysync.Editor
 			}
 		}
 
-		private static async Task<HttpListenerContext> GetContext(HttpListener listener, CancellationToken ct)
+		private sealed class BrowserCallback
+		{
+			public TcpClient Client;
+			public Uri Url;
+			public System.Collections.Specialized.NameValueCollection Query;
+		}
+
+		private static async Task<BrowserCallback> GetContext(TcpListener listener, string prefix, CancellationToken ct)
 		{
 			var startedAt = DateTime.UtcNow;
 			var lastLogSeconds = -1;
@@ -224,10 +236,42 @@ namespace Plysync.Editor
 			{
 				ct.ThrowIfCancellationRequested();
 
-				var contextTask = listener.GetContextAsync();
-				var completed = await Task.WhenAny(contextTask, Task.Delay(100, ct));
-				if (completed == contextTask)
-					return await contextTask;
+				var acceptTask = listener.AcceptTcpClientAsync();
+				var completed = await Task.WhenAny(acceptTask, Task.Delay(100, ct));
+				if (completed == acceptTask)
+				{
+					var client = await acceptTask;
+					try
+					{
+						var stream = client.GetStream();
+						var requestLine = await ReadRequestLine(stream, ct);
+						if (string.IsNullOrWhiteSpace(requestLine))
+							return new BrowserCallback { Client = client };
+
+						var parts = requestLine.Split(' ');
+						if (parts.Length < 2)
+							return new BrowserCallback { Client = client };
+
+						await DrainHeaders(stream, ct);
+
+						var rawPath = parts[1];
+						var fullUrl = rawPath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+							? rawPath
+							: prefix.TrimEnd('/') + rawPath;
+						var url = new Uri(fullUrl);
+						return new BrowserCallback
+						{
+							Client = client,
+							Url = url,
+							Query = ParseQuery(url.Query)
+						};
+					}
+					catch
+					{
+						client.Close();
+						throw;
+					}
+				}
 
 				var elapsedSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds;
 				if (elapsedSeconds != lastLogSeconds && elapsedSeconds > 0 && elapsedSeconds % 5 == 0)
@@ -238,9 +282,9 @@ namespace Plysync.Editor
 			}
 		}
 
-		private static async Task WriteHtml(HttpListenerResponse response, string title, string message)
+		private static async Task WriteHtml(BrowserCallback callback, string title, string message)
 		{
-			if (response == null)
+			if (callback == null || callback.Client == null)
 				return;
 
 			var safeTitle = WebUtility.HtmlEncode(title ?? "Plyground");
@@ -265,15 +309,88 @@ namespace Plysync.Editor
 </html>";
 
 			var bytes = Encoding.UTF8.GetBytes(html);
-			response.StatusCode = 200;
-			response.ContentType = "text/html; charset=utf-8";
-			response.ContentLength64 = bytes.Length;
+			var header =
+				"HTTP/1.1 200 OK\r\n" +
+				"Content-Type: text/html; charset=utf-8\r\n" +
+				"Content-Length: " + bytes.Length + "\r\n" +
+				"Connection: close\r\n\r\n";
+			var headerBytes = Encoding.ASCII.GetBytes(header);
 
-			using (var output = response.OutputStream)
+			try
 			{
-				await output.WriteAsync(bytes, 0, bytes.Length);
+				using (var output = callback.Client.GetStream())
+				{
+					await output.WriteAsync(headerBytes, 0, headerBytes.Length);
+					await output.WriteAsync(bytes, 0, bytes.Length);
+					await output.FlushAsync();
+				}
 			}
-			response.Close();
+			finally
+			{
+				callback.Client.Close();
+			}
+		}
+
+		private static async Task<string> ReadRequestLine(NetworkStream stream, CancellationToken ct)
+		{
+			var builder = new StringBuilder();
+			var buffer = new byte[1];
+			while (true)
+			{
+				ct.ThrowIfCancellationRequested();
+				var read = await stream.ReadAsync(buffer, 0, 1, ct);
+				if (read <= 0)
+					break;
+
+				var ch = (char)buffer[0];
+				if (ch == '\n')
+					break;
+				if (ch != '\r')
+					builder.Append(ch);
+			}
+
+			return builder.ToString();
+		}
+
+		private static async Task DrainHeaders(NetworkStream stream, CancellationToken ct)
+		{
+			var lineCount = 0;
+			while (true)
+			{
+				ct.ThrowIfCancellationRequested();
+				var line = await ReadRequestLine(stream, ct);
+				if (string.IsNullOrEmpty(line))
+					return;
+
+				lineCount++;
+				if (lineCount > 100)
+					return;
+			}
+		}
+
+		private static System.Collections.Specialized.NameValueCollection ParseQuery(string query)
+		{
+			var values = new System.Collections.Specialized.NameValueCollection();
+			if (string.IsNullOrWhiteSpace(query))
+				return values;
+
+			var trimmed = query.StartsWith("?") ? query.Substring(1) : query;
+			var parts = trimmed.Split('&');
+			for (var i = 0; i < parts.Length; i++)
+			{
+				var part = parts[i];
+				if (string.IsNullOrWhiteSpace(part))
+					continue;
+
+				var separatorIndex = part.IndexOf('=');
+				var rawKey = separatorIndex >= 0 ? part.Substring(0, separatorIndex) : part;
+				var rawValue = separatorIndex >= 0 ? part.Substring(separatorIndex + 1) : "";
+				var key = Uri.UnescapeDataString(rawKey.Replace("+", "%20"));
+				var value = Uri.UnescapeDataString(rawValue.Replace("+", "%20"));
+				values[key] = value;
+			}
+
+			return values;
 		}
 
 		private static string FirstNonEmpty(params string[] values)
