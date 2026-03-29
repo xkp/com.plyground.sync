@@ -106,6 +106,7 @@ namespace Plyground.Editor
 			// Environment import (ThreedeeLoader)
 			_progress("Importing environment (ThreedeeLoader)...", 0.55f);
 			string outputFolder = Application.dataPath;
+			_log("Starting environment import...");
 			EnvironmentImporter.Import(
 				gameId,
 				revision,
@@ -114,9 +115,11 @@ namespace Plyground.Editor
 				_defaultPostProcess,
 				_log
 			);
+			_log("Environment import finished.");
 
 			// Game items import (BigGameLoader)
 			_progress("Importing game items (BigGameLoader)...", 0.72f);
+			_log("Starting game items import via PlygroundLoader.Load...");
 
 			var preprocess = new List<PostProcessNode>(); // keep empty for now, wire UI later if needed
 			await PlygroundLoader.Load(
@@ -126,6 +129,7 @@ namespace Plyground.Editor
 				info.assetPath,
 				preprocess
 			);
+			_log("Game items import finished.");
 
 			// Save
 			_progress("Saving assets...", 0.90f);
