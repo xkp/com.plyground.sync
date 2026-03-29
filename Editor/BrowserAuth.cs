@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Security.Cryptography;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -44,7 +45,8 @@ namespace Plysync.Editor
 
 			var prefix = $"http://127.0.0.1:{CallbackPort}/";
 			var redirectUri = prefix + "callback/";
-			var loginUrl = string.Format(AuthorizeUrlTemplate, UnityWebRequest.EscapeURL(redirectUri));
+			var state = CreateState();
+			var loginUrl = string.Format(AuthorizeUrlTemplate, UnityWebRequest.EscapeURL(redirectUri)) + "&state=" + UnityWebRequest.EscapeURL(state);
 
 			using (var listener = new HttpListener())
 			{
@@ -84,6 +86,13 @@ namespace Plysync.Editor
 						var description = request.QueryString["error_description"] ?? error;
 						await WriteHtml(context.Response, "Login failed", description);
 						throw new Exception("Browser login failed: " + description);
+					}
+
+					var returnedState = request.QueryString["state"];
+					if (string.IsNullOrWhiteSpace(returnedState) || !string.Equals(returnedState, state, StringComparison.Ordinal))
+					{
+						await WriteHtml(context.Response, "Login failed", "The login callback state did not match the original request.");
+						throw new Exception("Browser login failed: callback state mismatch.");
 					}
 
 					var token = FirstNonEmpty(
@@ -213,6 +222,20 @@ namespace Plysync.Editor
 			}
 
 			return null;
+		}
+
+		private static string CreateState()
+		{
+			var bytes = new byte[24];
+			using (var rng = RandomNumberGenerator.Create())
+			{
+				rng.GetBytes(bytes);
+			}
+
+			return Convert.ToBase64String(bytes)
+				.TrimEnd('=')
+				.Replace('+', '-')
+				.Replace('/', '_');
 		}
 	}
 }
