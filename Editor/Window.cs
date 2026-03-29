@@ -375,9 +375,9 @@ namespace Plysync.Editor
 			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
 
 			if (string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId))
-				EditorGUILayout.HelpBox("Variation ID was not found for this project, so publish is unavailable.", MessageType.Warning);
+				EditorGUILayout.HelpBox("Variation ID will be resolved when you click Publish. If it cannot be found then, publish will show an error.", MessageType.Info);
 
-			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId);
+			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedGameId);
 			if (GUILayout.Button("Publish", GUILayout.Height(30)))
 				_ = PublishLinkedGame();
 			GUI.enabled = true;
