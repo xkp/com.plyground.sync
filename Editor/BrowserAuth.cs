@@ -202,10 +202,15 @@ namespace Plysync.Editor
 
 		private static int ReserveLocalPort()
 		{
-			using (var tcp = new TcpListener(IPAddress.Loopback, 0))
+			var tcp = new TcpListener(IPAddress.Loopback, 0);
+			try
 			{
 				tcp.Start();
 				return ((IPEndPoint)tcp.LocalEndpoint).Port;
+			}
+			finally
+			{
+				tcp.Stop();
 			}
 		}
 
