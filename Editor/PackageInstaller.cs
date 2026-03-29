@@ -127,7 +127,7 @@ using UnityEngine.Networking;
 				if (!string.IsNullOrWhiteSpace(fingerprint) &&
 					string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
 				{
-					log($".unitypackage already imported: {identity}");
+					log($".unitypackage already imported: {Path.GetFileName(pkg)}");
 					continue;
 				}
 
@@ -246,7 +246,9 @@ using UnityEngine.Networking;
 			if (string.IsNullOrWhiteSpace(packagePath))
 				return "unknown";
 
-			return MakeSafeFileName(Path.GetFileNameWithoutExtension(packagePath));
+			var projectKey = GetCurrentProjectKey();
+			var fullPackagePath = Path.GetFullPath(packagePath);
+			return MakeSafeFileName(projectKey + "_" + fullPackagePath);
 		}
 
 		private static string GetUnityPackageInstalledKey(string identity)
@@ -261,6 +263,23 @@ using UnityEngine.Networking;
 
 			var info = new FileInfo(packagePath);
 			return $"{info.Length}:{info.LastWriteTimeUtc.Ticks}";
+		}
+
+		private static string GetCurrentProjectKey()
+		{
+			try
+			{
+				var assetsPath = Application.dataPath;
+				if (string.IsNullOrWhiteSpace(assetsPath))
+					return "unknown-project";
+
+				var projectRoot = Directory.GetParent(assetsPath)?.FullName ?? assetsPath;
+				return projectRoot;
+			}
+			catch
+			{
+				return "unknown-project";
+			}
 		}
 
 		private static async Task WaitForRequest(Request request, CancellationToken ct)
