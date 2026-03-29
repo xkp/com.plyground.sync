@@ -16,6 +16,8 @@ using UnityEngine.Networking;
 	{
 		public static class PackageInstaller
 		{
+			private const string InstalledUnityPackagePrefix = "Plysync.InstalledUnityPackage.";
+
 			public static async Task<bool> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
 			{
 				if (pkgs == null)
@@ -117,17 +119,17 @@ using UnityEngine.Networking;
 					if (!File.Exists(pkg))
 						throw new FileNotFoundException("Unity package file was not found.", pkg);
 
-				//var identity = GetUnityPackageIdentity(pkg);
-				//var fingerprint = GetUnityPackageFingerprint(pkg);
-				//var installedKey = GetUnityPackageInstalledKey(identity);
-				//var installedFingerprint = EditorPrefs.GetString(installedKey, "");
+				var identity = GetUnityPackageIdentity(pkg);
+				var fingerprint = GetUnityPackageFingerprint(pkg);
+				var installedKey = GetUnityPackageInstalledKey(identity);
+				var installedFingerprint = EditorPrefs.GetString(installedKey, "");
 
-				//if (!string.IsNullOrWhiteSpace(fingerprint) &&
-				//	string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
-				//{
-				//	log($".unitypackage already imported: {identity}");
-				//	continue;
-				//}
+				if (!string.IsNullOrWhiteSpace(fingerprint) &&
+					string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+				{
+					log($".unitypackage already imported: {identity}");
+					continue;
+				}
 
 				//if (string.IsNullOrWhiteSpace(pkg.downloadUrl))
 				//{
@@ -142,6 +144,8 @@ using UnityEngine.Networking;
 					AssetDatabase.ImportPackage(localPath, false);
 					AssetDatabase.Refresh();
 					log($"Imported .unitypackage from: {localPath}");
+					if (!string.IsNullOrWhiteSpace(fingerprint))
+						EditorPrefs.SetString(installedKey, fingerprint);
 					changed = true;
 				}
 
@@ -235,6 +239,28 @@ using UnityEngine.Networking;
 			if (string.IsNullOrWhiteSpace(pkg.name)) return null;
 			if (string.IsNullOrWhiteSpace(pkg.version)) return pkg.name;
 			return $"{pkg.name}@{pkg.version}";
+		}
+
+		private static string GetUnityPackageIdentity(string packagePath)
+		{
+			if (string.IsNullOrWhiteSpace(packagePath))
+				return "unknown";
+
+			return MakeSafeFileName(Path.GetFileNameWithoutExtension(packagePath));
+		}
+
+		private static string GetUnityPackageInstalledKey(string identity)
+		{
+			return InstalledUnityPackagePrefix + MakeSafeFileName(identity);
+		}
+
+		private static string GetUnityPackageFingerprint(string packagePath)
+		{
+			if (string.IsNullOrWhiteSpace(packagePath) || !File.Exists(packagePath))
+				return "";
+
+			var info = new FileInfo(packagePath);
+			return $"{info.Length}:{info.LastWriteTimeUtc.Ticks}";
 		}
 
 		private static async Task WaitForRequest(Request request, CancellationToken ct)

@@ -9,10 +9,16 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
-namespace Plyground.Editor
-{
-	public sealed class ImportOrchestrator
+	namespace Plyground.Editor
 	{
+		public enum ImportRunResult
+		{
+			Completed,
+			DeferredForReload
+		}
+
+		public sealed class ImportOrchestrator
+		{
 		private readonly PlysyncClient _local;
 		private readonly CacheStore _cache;
 		private readonly Action<string> _log;
@@ -29,7 +35,7 @@ namespace Plyground.Editor
 			_progress = progress ?? ((_, __) => { });
 		}
 
-		public async Task Run(SyncBuildInfo info, CancellationToken ct)
+		public async Task<ImportRunResult> Run(SyncBuildInfo info, CancellationToken ct)
 		{
 			if (info == null) throw new Exception("SyncBuildInfo is null");
 			if (string.IsNullOrWhiteSpace(info.path)) throw new Exception("info.path is required");
@@ -84,6 +90,12 @@ namespace Plyground.Editor
 				_log(packagesChanged
 					? "Package install completed with project changes. Continuing import."
 					: "Package install completed without project changes.");
+
+				if (packagesChanged)
+				{
+					_log("Package changes detected. Deferring the rest of the import until Unity reloads assemblies.");
+					return ImportRunResult.DeferredForReload;
+				}
 			}
 			else
 			{
@@ -97,7 +109,7 @@ namespace Plyground.Editor
 				_log($"No changes. revision={revision}");
 				// still ensure marker has the latest paths
 				//UpsertSceneMarker(gameId, revision, info);
-				return;
+				return ImportRunResult.Completed;
 			}
 
 			_progress("Opening MainScene...", 0.30f);
@@ -153,6 +165,7 @@ namespace Plyground.Editor
 
 			_progress("Done.", 1f);
 			ImportSessionState.ClearPendingImportPath();
+			return ImportRunResult.Completed;
 		}
 
 		// private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)

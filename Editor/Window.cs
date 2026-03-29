@@ -512,7 +512,13 @@ namespace Plysync.Editor
 				BeginBusy($"{actionLabel}: {info.path}");
 
 				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-				await orchestrator.Run(info, token);
+				var result = await orchestrator.Run(info, token);
+				if (result == ImportRunResult.DeferredForReload)
+				{
+					_status = "Waiting for reload";
+					Log("Import paused so Unity can reload assemblies. The import will resume automatically.");
+					return;
+				}
 
 				// Store sync paths so we can operate without reconnect later
 				_cache.SaveSyncInfo(info);
@@ -566,7 +572,13 @@ namespace Plysync.Editor
 				BeginBusy($"Sync: {_linkedGameId}");
 
 				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-				await orchestrator.Run(latest, token);
+				var result = await orchestrator.Run(latest, token);
+				if (result == ImportRunResult.DeferredForReload)
+				{
+					_status = "Waiting for reload";
+					Log("Sync paused so Unity can reload assemblies. The sync will resume automatically.");
+					return;
+				}
 
 				// Update cached sync info too
 				_cache.SaveSyncInfo(latest);
@@ -628,7 +640,13 @@ namespace Plysync.Editor
 
 					SetProgress("Syncing...", 0.10f);
 					var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-					await orchestrator.Run(latest, token);
+					var result = await orchestrator.Run(latest, token);
+					if (result == ImportRunResult.DeferredForReload)
+					{
+						_status = "Waiting for reload";
+						Log("Publish paused because package changes require a Unity reload. Start publish again after the import resumes.");
+						return;
+					}
 
 					_cache.SaveSyncInfo(latest);
 					_linkedSyncInfo = latest;
