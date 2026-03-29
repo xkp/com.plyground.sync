@@ -32,6 +32,7 @@ namespace Plysync.Editor
 		private string _status = "Starting...";
 		private readonly StringBuilder _log = new StringBuilder();
 		private Vector2 _scroll;
+		private string _publishErrorMessage;
 
 		private bool _busy;
 		private float _progress;
@@ -377,6 +378,9 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId))
 				EditorGUILayout.HelpBox("Variation ID will be resolved when you click Publish. If it cannot be found then, publish will show an error.", MessageType.Info);
 
+			if (!string.IsNullOrWhiteSpace(_publishErrorMessage))
+				EditorGUILayout.HelpBox(_publishErrorMessage, MessageType.Error);
+
 			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedGameId);
 			if (GUILayout.Button("Publish", GUILayout.Height(30)))
 				_ = PublishLinkedGame();
@@ -550,58 +554,27 @@ namespace Plysync.Editor
 			}
 		}
 
-		private async Task SyncLinkedGame()
+		private Task SyncLinkedGame()
 		{
 			if (_busy) return;
 			if (string.IsNullOrWhiteSpace(_linkedGameId))
 			{
 				Log("No linked game detected (no marker).");
-				return;
+				return Task.CompletedTask;
 			}
 
 			if (!TryResolveLatestLinkedSyncInfo(out var latest))
 			{
 				Log("Linked game files were not found on disk.");
-				return;
+				return Task.CompletedTask;
 			}
 
-			_cts = new CancellationTokenSource();
-			var token = _cts.Token;
-
-			try
-			{
-				BeginBusy($"Sync: {_linkedGameId}");
-
-				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-				var result = await orchestrator.Run(latest, token);
-				if (result == ImportRunResult.DeferredForReload)
-				{
-					_status = "Waiting for reload";
-					Log("Sync paused so Unity can reload assemblies. The sync will resume automatically.");
-					return;
-				}
-
-				// Update cached sync info too
-				_cache.SaveSyncInfo(latest);
-				_linkedSyncInfo = latest;
-
-				_status = "Synced";
-				Log("Sync complete.");
-				ScaffoldInboxCheck();
-			}
-			catch (OperationCanceledException)
-			{
-				Log("Sync cancelled.");
-			}
-			catch (Exception e)
-			{
-				Log("Sync failed: " + e);
-			}
-			finally
-			{
-				EndBusy();
-				Repaint();
-			}
+			_linkedSyncInfo = latest;
+			_cache.SaveSyncInfo(latest);
+			_status = "Sync not implemented";
+			Log("Sync is not implemented yet. Future sync will match the current scene and apply changes instead of re-importing.");
+			Repaint();
+			return Task.CompletedTask;
 		}
 
 		private async Task PublishLinkedGame()
@@ -619,6 +592,7 @@ namespace Plysync.Editor
 			try
 			{
 				BeginBusy($"Publish: {_linkedGameId}");
+				_publishErrorMessage = null;
 
 				// Determine revision for metadata (optional)
 				var syncInfo = _linkedSyncInfo ?? _cache.LoadSyncInfo(_linkedGameId);
@@ -632,19 +606,10 @@ namespace Plysync.Editor
 					if (!TryResolveLatestLinkedSyncInfo(out var latest))
 						throw new Exception("Linked game files were not found on disk.");
 
-					SetProgress("Syncing...", 0.10f);
-					var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-					var result = await orchestrator.Run(latest, token);
-					if (result == ImportRunResult.DeferredForReload)
-					{
-						_status = "Waiting for reload";
-						Log("Publish paused because package changes require a Unity reload. Start publish again after the import resumes.");
-						return;
-					}
-
 					_cache.SaveSyncInfo(latest);
 					_linkedSyncInfo = latest;
 					EnsureVariationId(_linkedSyncInfo);
+					Log("Sync before publish is not implemented yet. Publish will continue without applying scene changes.");
 
 					revision = ResolveRevisionFromSyncInfo(latest) ?? revision;
 				}
@@ -665,6 +630,7 @@ namespace Plysync.Editor
 				}
 
 				_lastPublishedGameUrl = publishedUrl;
+				_publishErrorMessage = null;
 				SetProgress("Done.", 1f);
 				Log($"Publish complete. url={_lastPublishedGameUrl}");
 			}
@@ -826,10 +792,25 @@ namespace Plysync.Editor
 
 		private void NotifyPublishFailure(string message)
 		{
-			var resolvedMessage = string.IsNullOrWhiteSpace(message) ? "Publish failed." : message;
+			var resolvedMessage = BuildPublishFailureMessage(message);
+			_publishErrorMessage = resolvedMessage;
 			_status = "Publish failed";
-			ShowNotification(new GUIContent(resolvedMessage));
-			EditorUtility.DisplayDialog("Publish failed", resolvedMessage, "OK");
+			Repaint();
+		}
+
+		private static string BuildPublishFailureMessage(string message)
+		{
+			var text = message ?? "";
+			if (text.IndexOf("Could not reach the Plyground local server", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("connection refused", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("cannot connect", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+				|| text.IndexOf("failed to connect", StringComparison.OrdinalIgnoreCase) >= 0)
+			{
+				return "The Plyground app should be running before you publish.";
+			}
+
+			return "An unexpected error happened while publishing.";
 		}
 	}
 }
