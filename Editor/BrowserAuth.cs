@@ -116,8 +116,8 @@ namespace Plysync.Editor
 					var code = request.QueryString["code"];
 					if (!string.IsNullOrWhiteSpace(code))
 					{
+						await WriteHtml(context.Response, "Login received", "Plyground received your sign-in. You can close this browser window and return to Unity while we finish connecting your account.");
 						var exchangedToken = await ExchangeCodeForToken(code, redirectUri, codeVerifier, ct);
-						await WriteHtml(context.Response, "Login complete", "You can close this browser window and return to Unity.");
 						return exchangedToken;
 					}
 
