@@ -26,6 +26,7 @@ namespace Plysync.Editor
 
 		private string _cloudBaseUrl;
 		private string _cloudToken = "";
+		private string _cloudAuthStatus = "";
 
 		private bool _showAdvanced;
 
@@ -68,6 +69,7 @@ namespace Plysync.Editor
 			_showAdvanced = EditorPrefs.GetBool("Plysync.ShowAdvanced", false);
 
 			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
+			_cloudAuthStatus = HasCloudToken() ? "Logged in" : "Not logged in";
 			_logoTexture = LoadLogoTexture();
 			if (_log.Length == 0)
 				_log.Append(ImportSessionState.LoadLog());
@@ -377,16 +379,44 @@ namespace Plysync.Editor
 			EditorGUILayout.Space(10);
 			EditorGUILayout.LabelField("Publish (WebGL)", EditorStyles.boldLabel);
 
+			DrawCloudAuthControls();
+
 			_devBuild = EditorGUILayout.Toggle("Development Build", _devBuild);
 			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
 
-			if (string.IsNullOrWhiteSpace(_cloudToken))
-				EditorGUILayout.HelpBox("Cloud token is empty. Set it in Advanced.", MessageType.Warning);
+			if (!HasCloudToken())
+				EditorGUILayout.HelpBox("Log in to Plyground before publishing.", MessageType.Warning);
 
-			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_cloudToken);
+			GUI.enabled = !_busy && HasCloudToken();
 			if (GUILayout.Button("Build & Publish", GUILayout.Height(30)))
 				_ = PublishLinkedGame();
 			GUI.enabled = true;
+
+			EditorGUILayout.Space(8);
+			DrawAdvancedFoldout();
+		}
+
+		private void DrawCloudAuthControls()
+		{
+			var authLabel = HasCloudToken()
+				? $"Plyground account connected. {_cloudAuthStatus}"
+				: $"Plyground account not connected. {_cloudAuthStatus}";
+
+			EditorGUILayout.HelpBox(authLabel, HasCloudToken() ? MessageType.Info : MessageType.None);
+
+			using (new EditorGUILayout.HorizontalScope())
+			{
+				GUI.enabled = !_busy;
+				if (GUILayout.Button(HasCloudToken() ? "Refresh Login" : "Log In To Plyground", GUILayout.Height(26)))
+					_ = LoginToCloud();
+
+				GUI.enabled = !_busy && HasCloudToken();
+				if (GUILayout.Button("Log Out", GUILayout.Height(26), GUILayout.Width(100)))
+					LogOutOfCloud();
+				GUI.enabled = true;
+			}
+
+			EditorGUILayout.Space(4);
 		}
 
 		private void DrawAdvancedFoldout()
@@ -396,7 +426,7 @@ namespace Plysync.Editor
 
 			EditorGUI.indentLevel++;
 			_cloudBaseUrl = EditorGUILayout.TextField("Cloud API", _cloudBaseUrl);
-			_cloudToken = EditorGUILayout.PasswordField("Cloud Token", _cloudToken);
+			_cloudToken = EditorGUILayout.PasswordField("Access Token Fallback", _cloudToken);
 
 			using (new EditorGUILayout.HorizontalScope())
 			{
@@ -410,6 +440,8 @@ namespace Plysync.Editor
 					EditorPrefs.SetString("Plysync.CloudBaseUrl", _cloudBaseUrl);
 					EditorPrefs.SetString("Plysync.CloudToken", _cloudToken);
 					EditorPrefs.SetBool("Plysync.ShowAdvanced", _showAdvanced);
+					SetCloudAuthStatus(HasCloudToken() ? "Loaded from Advanced settings." : "Not logged in.");
+					RebuildCloudClient();
 					Log("Advanced settings saved.");
 				}
 			}
@@ -434,7 +466,7 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(_cloudBaseUrl)) _cloudBaseUrl = DefaultCloudBaseUrl;
 
 			_cloudBaseUrl = (_cloudBaseUrl ?? "").Trim().TrimEnd('/');
-			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
+			RebuildCloudClient();
 
 			if (ImportSessionState.TryLoadPendingImportPath(out var pendingImportPath))
 			{
@@ -612,9 +644,9 @@ namespace Plysync.Editor
 				Log("No linked game detected (no marker).");
 				return;
 			}
-			if (string.IsNullOrWhiteSpace(_cloudToken))
+			if (!HasCloudToken())
 			{
-				Log("Cloud token missing.");
+				Log("You must log in to Plyground before publishing.");
 				return;
 			}
 
@@ -756,6 +788,69 @@ namespace Plysync.Editor
 			if (_log.Length > 200_000) _log.Remove(0, 50_000);
 			ImportSessionState.SaveLog(_log.ToString());
 			Repaint();
+		}
+
+		private async Task LoginToCloud()
+		{
+			if (_busy) return;
+
+			_cts = new CancellationTokenSource();
+			var token = _cts.Token;
+
+			try
+			{
+				BeginBusy("Plyground Login");
+				SetCloudAuthStatus("Opening browser login...");
+
+				var auth = new BrowserAuthSession(_cloudBaseUrl, Log);
+				var accessToken = await auth.Login(token);
+
+				_cloudToken = accessToken;
+				EditorPrefs.SetString("Plysync.CloudBaseUrl", _cloudBaseUrl);
+				EditorPrefs.SetString("Plysync.CloudToken", _cloudToken);
+				SetCloudAuthStatus("Logged in successfully.");
+				RebuildCloudClient();
+				Log("Plyground login complete.");
+			}
+			catch (OperationCanceledException)
+			{
+				SetCloudAuthStatus("Login canceled.");
+				Log("Plyground login cancelled.");
+			}
+			catch (Exception e)
+			{
+				SetCloudAuthStatus("Login failed.");
+				Log("Plyground login failed: " + e.Message);
+			}
+			finally
+			{
+				EndBusy();
+				Repaint();
+			}
+		}
+
+		private void LogOutOfCloud()
+		{
+			_cloudToken = "";
+			EditorPrefs.DeleteKey("Plysync.CloudToken");
+			SetCloudAuthStatus("Logged out.");
+			RebuildCloudClient();
+			Log("Cleared saved Plyground login.");
+		}
+
+		private bool HasCloudToken()
+		{
+			return !string.IsNullOrWhiteSpace(_cloudToken);
+		}
+
+		private void SetCloudAuthStatus(string value)
+		{
+			_cloudAuthStatus = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
+		}
+
+		private void RebuildCloudClient()
+		{
+			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
 		}
 
 		private bool TryResolveLatestLinkedSyncInfo(out SyncBuildInfo info)
