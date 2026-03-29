@@ -1,8 +1,6 @@
 #if UNITY_EDITOR
 using System;
-using System.IO;
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -28,6 +26,7 @@ namespace Plysync.Editor
 	public sealed class BrowserAuthSession
 	{
 		private const string AuthorizeUrlTemplate = "https://auth.plyground.ai/oauth2/auth?client_id=ffc836d2eebb4ccd9b6319a133f21035&response_type=code&scope=openid%20profile%20email&redirect_uri={0}";
+		private const int CallbackPort = 42137;
 
 		private readonly string _baseUrl;
 		private readonly Action<string> _log;
@@ -43,8 +42,7 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(_baseUrl))
 				throw new Exception("Cloud API base URL is not configured.");
 
-			var port = ReserveLocalPort();
-			var prefix = $"http://127.0.0.1:{port}/";
+			var prefix = $"http://127.0.0.1:{CallbackPort}/";
 			var redirectUri = prefix + "callback/";
 			var loginUrl = string.Format(AuthorizeUrlTemplate, UnityWebRequest.EscapeURL(redirectUri));
 
@@ -199,20 +197,6 @@ namespace Plysync.Editor
 			using (var output = response.OutputStream)
 			{
 				await output.WriteAsync(bytes, 0, bytes.Length);
-			}
-		}
-
-		private static int ReserveLocalPort()
-		{
-			var tcp = new TcpListener(IPAddress.Loopback, 0);
-			try
-			{
-				tcp.Start();
-				return ((IPEndPoint)tcp.LocalEndpoint).Port;
-			}
-			finally
-			{
-				tcp.Stop();
 			}
 		}
 
