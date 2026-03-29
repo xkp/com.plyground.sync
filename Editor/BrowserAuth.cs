@@ -29,6 +29,7 @@ namespace Plysync.Editor
 	{
 		private const string AuthorizeUrlTemplate = "https://auth.plyground.ai/oauth2/auth?client_id=ffc836d2eebb4ccd9b6319a133f21035&response_type=code&scope=openid%20profile%20email&redirect_uri={0}";
 		private const int CallbackPort = 42137;
+		private const int ExchangeTimeoutMs = 30000;
 
 		private readonly string _baseUrl;
 		private readonly Action<string> _log;
@@ -54,35 +55,55 @@ namespace Plysync.Editor
 				"&state=" + UnityWebRequest.EscapeURL(state) +
 				"&code_challenge=" + UnityWebRequest.EscapeURL(codeChallenge) +
 				"&code_challenge_method=S256";
+			_log($"Auth listener preparing on {prefix}");
+			_log($"Auth redirect URI: {redirectUri}");
+			_log($"Auth state length: {state.Length}");
+			_log($"PKCE verifier length: {codeVerifier.Length}");
 
 			using (var listener = new HttpListener())
 			{
 				listener.Prefixes.Add(prefix);
-				listener.Start();
+				try
+				{
+					listener.Start();
+				}
+				catch (Exception ex)
+				{
+					_log("Failed to start local auth listener: " + ex);
+					throw;
+				}
+				_log("Local auth listener started successfully.");
 
 				_log($"Opening browser login at: {loginUrl}");
 				Application.OpenURL(loginUrl);
+				_log("Waiting for browser callback...");
 
 				while (true)
 				{
 					ct.ThrowIfCancellationRequested();
 					var context = await GetContext(listener, ct);
 					var request = context.Request;
+					_log("Received browser callback connection.");
 					if (request == null)
 					{
+						_log("Browser callback request was null.");
 						await WriteHtml(context.Response, "Login failed", "The login callback did not include a request.");
 						continue;
 					}
 
 					if (request.Url == null)
 					{
+						_log("Browser callback URL was null.");
 						await WriteHtml(context.Response, "Login failed", "The login callback URL was missing.");
 						continue;
 					}
 
+					_log($"Browser callback URL: {request.Url}");
+
 					if (!string.Equals(request.Url.AbsolutePath, "/callback/", StringComparison.OrdinalIgnoreCase) &&
 						!string.Equals(request.Url.AbsolutePath, "/callback", StringComparison.OrdinalIgnoreCase))
 					{
+						_log("Ignoring callback on unexpected path: " + request.Url.AbsolutePath);
 						await WriteHtml(context.Response, "Plyground Login", "Waiting for the Plyground login callback...");
 						continue;
 					}
@@ -91,6 +112,7 @@ namespace Plysync.Editor
 					if (!string.IsNullOrWhiteSpace(error))
 					{
 						var description = request.QueryString["error_description"] ?? error;
+						_log("Browser login returned error: " + description);
 						await WriteHtml(context.Response, "Login failed", description);
 						throw new Exception("Browser login failed: " + description);
 					}
@@ -98,9 +120,11 @@ namespace Plysync.Editor
 					var returnedState = request.QueryString["state"];
 					if (string.IsNullOrWhiteSpace(returnedState) || !string.Equals(returnedState, state, StringComparison.Ordinal))
 					{
+						_log($"Browser callback state mismatch. Expected='{state}' Returned='{returnedState}'");
 						await WriteHtml(context.Response, "Login failed", "The login callback state did not match the original request.");
 						throw new Exception("Browser login failed: callback state mismatch.");
 					}
+					_log("Browser callback state validated.");
 
 					var token = FirstNonEmpty(
 						request.QueryString["access_token"],
@@ -109,6 +133,7 @@ namespace Plysync.Editor
 
 					if (!string.IsNullOrWhiteSpace(token))
 					{
+						_log($"Browser callback included token directly. Token length={token.Trim().Length}");
 						await WriteHtml(context.Response, "Login complete", "You can close this browser window and return to Unity.");
 						return token.Trim();
 					}
@@ -116,11 +141,15 @@ namespace Plysync.Editor
 					var code = request.QueryString["code"];
 					if (!string.IsNullOrWhiteSpace(code))
 					{
+						_log($"Browser callback included authorization code. Code length={code.Trim().Length}");
 						await WriteHtml(context.Response, "Login received", "Plyground received your sign-in. You can close this browser window and return to Unity while we finish connecting your account.");
+						_log("Browser response sent. Starting auth code exchange...");
 						var exchangedToken = await ExchangeCodeForToken(code, redirectUri, codeVerifier, ct);
+						_log($"Auth code exchange completed. Token length={exchangedToken?.Length ?? 0}");
 						return exchangedToken;
 					}
 
+					_log("Browser callback did not include a token or code.");
 					await WriteHtml(context.Response, "Login failed", "No token or code was returned to Unity.");
 					throw new Exception("Browser login failed: callback did not include a token or code.");
 				}
@@ -141,6 +170,9 @@ namespace Plysync.Editor
 			var bytes = Encoding.UTF8.GetBytes(json);
 
 			_log($"Exchanging auth code at: {url}");
+			_log($"Exchange payload redirectUri={redirectUri}");
+			_log($"Exchange payload code length={code?.Length ?? 0}");
+			_log($"Exchange payload codeVerifier length={codeVerifier?.Length ?? 0}");
 
 			using (var req = new UnityWebRequest(url, "POST"))
 			{
@@ -149,15 +181,32 @@ namespace Plysync.Editor
 				req.SetRequestHeader("Content-Type", "application/json");
 
 				var op = req.SendWebRequest();
+				var startedAt = DateTime.UtcNow;
+				var lastLogSeconds = -1;
 				while (!op.isDone)
 				{
 					ct.ThrowIfCancellationRequested();
+					var elapsedSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds;
+					if (elapsedSeconds != lastLogSeconds && elapsedSeconds > 0 && elapsedSeconds % 5 == 0)
+					{
+						lastLogSeconds = elapsedSeconds;
+						_log($"Auth code exchange still waiting after {elapsedSeconds}s...");
+					}
+					if ((DateTime.UtcNow - startedAt).TotalMilliseconds > ExchangeTimeoutMs)
+					{
+						req.Abort();
+						throw new Exception($"Auth code exchange timed out after {ExchangeTimeoutMs / 1000}s. Verify the backend '/api/auth/unity/exchange' endpoint is reachable and handles PKCE.");
+					}
 					await Task.Delay(50, ct);
 				}
 
 				if (req.result != UnityWebRequest.Result.Success)
+				{
+					_log($"Auth code exchange failed. Status={req.responseCode} Error={req.error} Body={req.downloadHandler?.text}");
 					throw new Exception($"Auth code exchange failed: {req.responseCode} {req.error} body={req.downloadHandler?.text}");
+				}
 
+				_log($"Auth code exchange HTTP {req.responseCode}. Body={req.downloadHandler?.text}");
 				var response = JsonUtility.FromJson<BrowserAuthExchangeResponse>(req.downloadHandler.text ?? "");
 				var token = FirstNonEmpty(response?.accessToken, response?.token);
 				if (string.IsNullOrWhiteSpace(token))
@@ -169,6 +218,8 @@ namespace Plysync.Editor
 
 		private static async Task<HttpListenerContext> GetContext(HttpListener listener, CancellationToken ct)
 		{
+			var startedAt = DateTime.UtcNow;
+			var lastLogSeconds = -1;
 			while (true)
 			{
 				ct.ThrowIfCancellationRequested();
@@ -177,6 +228,13 @@ namespace Plysync.Editor
 				var completed = await Task.WhenAny(contextTask, Task.Delay(100, ct));
 				if (completed == contextTask)
 					return await contextTask;
+
+				var elapsedSeconds = (int)(DateTime.UtcNow - startedAt).TotalSeconds;
+				if (elapsedSeconds != lastLogSeconds && elapsedSeconds > 0 && elapsedSeconds % 5 == 0)
+				{
+					lastLogSeconds = elapsedSeconds;
+					Debug.Log($"[Plysync] Still waiting for auth callback on localhost after {elapsedSeconds}s...");
+				}
 			}
 		}
 
@@ -215,6 +273,7 @@ namespace Plysync.Editor
 			{
 				await output.WriteAsync(bytes, 0, bytes.Length);
 			}
+			response.Close();
 		}
 
 		private static string FirstNonEmpty(params string[] values)
