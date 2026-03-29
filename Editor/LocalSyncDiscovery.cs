@@ -80,6 +80,24 @@ namespace Plysync.Editor
 			return Path.Combine(Application.dataPath, "plyground", "inbox");
 		}
 
+		public static string GetVariationIdFromRoot(string rootPath)
+		{
+			if (string.IsNullOrWhiteSpace(rootPath))
+				return null;
+
+			try
+			{
+				var normalizedRoot = Path.GetFullPath(rootPath)
+					.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+				var folderName = Path.GetFileName(normalizedRoot);
+				return string.IsNullOrWhiteSpace(folderName) ? null : folderName;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
 		public static string GetVariantSearchRoot()
 		{
 			var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
@@ -112,7 +130,12 @@ namespace Plysync.Editor
 			info = null;
 			log ??= _ => { };
 
-			var folderName = new DirectoryInfo(root).Name;
+			var folderName = GetVariationIdFromRoot(root);
+			if (string.IsNullOrWhiteSpace(folderName))
+			{
+				log($"Skipping '{root}': could not determine the variation folder name.");
+				return false;
+			}
 
 			// 1) Find a file called as the containing folder and read it as JSON.
 			var variationFilePath = FindVariationDescriptorFile(root, folderName);
@@ -185,7 +208,7 @@ namespace Plysync.Editor
 			info = new SyncBuildInfo
 			{
 				name = descriptor.name,
-				variationId = descriptor.userVariationId,
+				variationId = folderName,
 				path = root,
 				environmentPath = environmentPath,
 				gameItemPath = gameItemPath,
@@ -272,7 +295,7 @@ namespace Plysync.Editor
 
 		private static string FindEnvironmentPath(string root, string variationName, string seed, Action<string> log)
 		{
-			if (string.IsNullOrWhiteSpace(variationName) || string.IsNullOrWhiteSpace(seed))
+			if (string.IsNullOrWhiteSpace(variationName))
 				return null;
 
 			var jobsVariationDir = Path.GetFullPath(Path.Combine(root, "..", "..", "jobs", variationName));
@@ -282,33 +305,65 @@ namespace Plysync.Editor
 				return null;
 			}
 
-			string[] seedJsonFiles;
+			if (!string.IsNullOrWhiteSpace(seed))
+			{
+				string[] seedJsonFiles;
+				try
+				{
+					seedJsonFiles = Directory.GetFiles(jobsVariationDir, seed + "*.json", SearchOption.TopDirectoryOnly);
+				}
+				catch (Exception ex)
+				{
+					log?.Invoke($"Failed searching seed json files in '{jobsVariationDir}': {ex.Message}");
+					return null;
+				}
+
+				if (seedJsonFiles != null && seedJsonFiles.Length > 0)
+				{
+					foreach (var seedJsonFile in seedJsonFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+					{
+						var seedFolder = Path.Combine(jobsVariationDir, Path.GetFileNameWithoutExtension(seedJsonFile));
+						var threedeeJson = Path.Combine(seedFolder, "threedee_scene.json");
+
+						if (Directory.Exists(seedFolder) && File.Exists(threedeeJson))
+							return seedFolder;
+					}
+
+					log?.Invoke($"Seed json files were found, but no matching folder with threedee_scene.json was found under '{jobsVariationDir}'.");
+				}
+				else
+				{
+					log?.Invoke($"No seed json files found in '{jobsVariationDir}' for pattern '{seed}*.json'. Falling back to folder scan.");
+				}
+			}
+
 			try
 			{
-				seedJsonFiles = Directory.GetFiles(jobsVariationDir, seed + "*.json", SearchOption.TopDirectoryOnly);
+				var matchingFolders = Directory
+					.GetDirectories(jobsVariationDir, "*", SearchOption.TopDirectoryOnly)
+					.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+					.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+
+				if (matchingFolders.Length == 1)
+				{
+					log?.Invoke($"Using fallback environment folder: {matchingFolders[0]}");
+					return matchingFolders[0];
+				}
+
+				if (matchingFolders.Length > 1)
+				{
+					log?.Invoke($"Environment fallback found multiple folders with threedee_scene.json under '{jobsVariationDir}'.");
+					return null;
+				}
 			}
 			catch (Exception ex)
 			{
-				log?.Invoke($"Failed searching seed json files in '{jobsVariationDir}': {ex.Message}");
+				log?.Invoke($"Failed scanning fallback environment folders in '{jobsVariationDir}': {ex.Message}");
 				return null;
 			}
 
-			if (seedJsonFiles == null || seedJsonFiles.Length == 0)
-			{
-				log?.Invoke($"No seed json files found in '{jobsVariationDir}' for pattern '{seed}*.json'.");
-				return null;
-			}
-
-			foreach (var seedJsonFile in seedJsonFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-			{
-				var seedFolder = Path.Combine(jobsVariationDir, Path.GetFileNameWithoutExtension(seedJsonFile));
-				var threedeeJson = Path.Combine(seedFolder, "threedee_scene.json");
-
-				if (Directory.Exists(seedFolder) && File.Exists(threedeeJson))
-					return seedFolder;
-			}
-
-			log?.Invoke($"Seed json files were found, but no matching folder with threedee.json was found under '{jobsVariationDir}'.");
+			log?.Invoke($"No environment folder containing threedee_scene.json was found under '{jobsVariationDir}'.");
 			return null;
 		}
 

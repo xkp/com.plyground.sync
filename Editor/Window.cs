@@ -622,16 +622,15 @@ namespace Plysync.Editor
 
 				// Determine revision for metadata (optional)
 				var syncInfo = _linkedSyncInfo ?? _cache.LoadSyncInfo(_linkedGameId);
+				EnsureVariationId(syncInfo);
+				EnsureVariationId(_linkedSyncInfo);
 				var revision = ResolveRevisionFromSyncInfo(syncInfo) ?? _linkedRevision ?? "unknown";
 
 				if (_autoSyncBeforePublish)
 				{
 					SetProgress("Refreshing local project files...", 0.06f);
 					if (!TryResolveLatestLinkedSyncInfo(out var latest))
-					{
-						Log("Linked game files were not found on disk.");
-						return;
-					}
+						throw new Exception("Linked game files were not found on disk.");
 
 					SetProgress("Syncing...", 0.10f);
 					var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
@@ -645,16 +644,14 @@ namespace Plysync.Editor
 
 					_cache.SaveSyncInfo(latest);
 					_linkedSyncInfo = latest;
+					EnsureVariationId(_linkedSyncInfo);
 
 					revision = ResolveRevisionFromSyncInfo(latest) ?? revision;
 				}
 
-				var variationId = _linkedSyncInfo?.variationId ?? syncInfo?.variationId;
+				var variationId = ResolveVariationId(_linkedSyncInfo) ?? ResolveVariationId(syncInfo);
 				if (string.IsNullOrWhiteSpace(variationId))
-				{
-					Log("Variation ID was not found for this project.");
-					return;
-				}
+					throw new Exception("Variation ID was not found for this project.");
 
 				SetProgress("Publishing via Plyground app...", 0.60f);
 				_lastPublishedGameUrl = "";
@@ -678,6 +675,7 @@ namespace Plysync.Editor
 			catch (Exception e)
 			{
 				Log("Publish failed: " + e);
+				NotifyPublishFailure(e.Message);
 			}
 			finally
 			{
@@ -763,7 +761,9 @@ namespace Plysync.Editor
 
 			return new SyncBuildInfo
 			{
-				variationId = marker.variationId,
+				variationId = !string.IsNullOrWhiteSpace(marker.variationId)
+					? marker.variationId
+					: LocalSyncDiscovery.GetVariationIdFromRoot(marker.syncRootPath ?? marker.gameId),
 				path = marker.syncRootPath ?? marker.gameId,
 				environmentPath = marker.environmentPath,
 				gameItemPath = marker.gameItemPath,
@@ -804,6 +804,32 @@ namespace Plysync.Editor
 			{
 				Log("Inbox scaffold setup failed: " + e.Message);
 			}
+		}
+
+		private static string ResolveVariationId(SyncBuildInfo info)
+		{
+			if (info == null) return null;
+			if (!string.IsNullOrWhiteSpace(info.variationId))
+				return info.variationId;
+
+			var derivedVariationId = LocalSyncDiscovery.GetVariationIdFromRoot(info.path);
+			return string.IsNullOrWhiteSpace(derivedVariationId) ? null : derivedVariationId;
+		}
+
+		private static void EnsureVariationId(SyncBuildInfo info)
+		{
+			if (info == null || !string.IsNullOrWhiteSpace(info.variationId))
+				return;
+
+			info.variationId = ResolveVariationId(info);
+		}
+
+		private void NotifyPublishFailure(string message)
+		{
+			var resolvedMessage = string.IsNullOrWhiteSpace(message) ? "Publish failed." : message;
+			_status = "Publish failed";
+			ShowNotification(new GUIContent(resolvedMessage));
+			EditorUtility.DisplayDialog("Publish failed", resolvedMessage, "OK");
 		}
 	}
 }
