@@ -5,6 +5,7 @@ namespace Plyground.Sync.Runtime
     public sealed class SceneMarker : MonoBehaviour
     {
         public string gameId;
+        public string variationId;
         public string revision;
         public string localServerBaseUrl; // optional (for debugging)
         public string importedAtUtc;

@@ -185,6 +185,7 @@ namespace Plysync.Editor
 			info = new SyncBuildInfo
 			{
 				name = descriptor.name,
+				variationId = descriptor.userVariationId,
 				path = root,
 				environmentPath = environmentPath,
 				gameItemPath = gameItemPath,

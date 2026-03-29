@@ -13,7 +13,7 @@ namespace Plysync.Editor
 {
 	public class PlysyncWindow : EditorWindow
 	{
-		private const string DefaultCloudBaseUrl = "https://api.yourcloud.com"; // change
+		private const string DefaultLocalPublishServerBaseUrl = "http://localhost:4300";
 		private const string DefaultLogoAssetPath = "Assets/plyground/Editor/logo.png";
 		private const string PackageLogoAssetPath = "Packages/ai.plyground.sync/Editor/logo.png";
 
@@ -24,9 +24,8 @@ namespace Plysync.Editor
 			LinkedProject
 		}
 
-		private string _cloudBaseUrl;
-		private string _cloudToken = "";
-		private string _cloudAuthStatus = "";
+		private string _localPublishServerBaseUrl;
+		private string _lastPublishedGameUrl = "";
 
 		private bool _showAdvanced;
 
@@ -39,7 +38,6 @@ namespace Plysync.Editor
 		private string _step = "";
 		private CancellationTokenSource _cts;
 
-		private CloudPublishClient _cloud;
 		private CacheStore _cache;
 
 		private bool _discovered;
@@ -51,7 +49,6 @@ namespace Plysync.Editor
 		private string _linkedGameId;          // marker.gameId (we store SyncBuildInfo.path here)
 		private string _linkedRevision;        // marker.revision (optional)
 
-		private bool _devBuild = false;
 		private bool _autoSyncBeforePublish = true;
 		private Texture2D _logoTexture;
 		private GUIStyle _headerBodyStyle;
@@ -64,12 +61,8 @@ namespace Plysync.Editor
 		{
 			_cache = new CacheStore();
 
-			_cloudBaseUrl = EditorPrefs.GetString("Plysync.CloudBaseUrl", DefaultCloudBaseUrl);
-			_cloudToken = EditorPrefs.GetString("Plysync.CloudToken", _cloudToken);
+			_localPublishServerBaseUrl = EditorPrefs.GetString("Plysync.LocalPublishServerBaseUrl", DefaultLocalPublishServerBaseUrl);
 			_showAdvanced = EditorPrefs.GetBool("Plysync.ShowAdvanced", false);
-
-			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
-			_cloudAuthStatus = HasCloudToken() ? "Logged in" : "Not logged in";
 			_logoTexture = LoadLogoTexture();
 			if (_log.Length == 0)
 				_log.Append(ImportSessionState.LoadLog());
@@ -85,8 +78,7 @@ namespace Plysync.Editor
 
 		private void OnDisable()
 		{
-			EditorPrefs.SetString("Plysync.CloudBaseUrl", _cloudBaseUrl);
-			EditorPrefs.SetString("Plysync.CloudToken", _cloudToken);
+			EditorPrefs.SetString("Plysync.LocalPublishServerBaseUrl", _localPublishServerBaseUrl);
 			EditorPrefs.SetBool("Plysync.ShowAdvanced", _showAdvanced);
 
 			_cts?.Cancel();
@@ -379,44 +371,26 @@ namespace Plysync.Editor
 			EditorGUILayout.Space(10);
 			EditorGUILayout.LabelField("Publish (WebGL)", EditorStyles.boldLabel);
 
-			DrawCloudAuthControls();
-
-			_devBuild = EditorGUILayout.Toggle("Development Build", _devBuild);
 			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
 
-			if (!HasCloudToken())
-				EditorGUILayout.HelpBox("Log in to Plyground before publishing.", MessageType.Warning);
+			if (string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId))
+				EditorGUILayout.HelpBox("Variation ID was not found for this project, so publish is unavailable.", MessageType.Warning);
 
-			GUI.enabled = !_busy && HasCloudToken();
-			if (GUILayout.Button("Build & Publish", GUILayout.Height(30)))
+			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId);
+			if (GUILayout.Button("Publish", GUILayout.Height(30)))
 				_ = PublishLinkedGame();
 			GUI.enabled = true;
 
-			EditorGUILayout.Space(8);
-			DrawAdvancedFoldout();
-		}
-
-		private void DrawCloudAuthControls()
-		{
-			var authLabel = HasCloudToken()
-				? $"Plyground account connected. {_cloudAuthStatus}"
-				: $"Plyground account not connected. {_cloudAuthStatus}";
-
-			EditorGUILayout.HelpBox(authLabel, HasCloudToken() ? MessageType.Info : MessageType.None);
-
-			using (new EditorGUILayout.HorizontalScope())
+			if (!string.IsNullOrWhiteSpace(_lastPublishedGameUrl))
 			{
 				GUI.enabled = !_busy;
-				if (GUILayout.Button(HasCloudToken() ? "Refresh Login" : "Log In To Plyground", GUILayout.Height(26)))
-					_ = LoginToCloud();
-
-				GUI.enabled = !_busy && HasCloudToken();
-				if (GUILayout.Button("Log Out", GUILayout.Height(26), GUILayout.Width(100)))
-					LogOutOfCloud();
+				if (GUILayout.Button("Run Game", GUILayout.Height(26)))
+					Application.OpenURL(_lastPublishedGameUrl);
 				GUI.enabled = true;
 			}
 
-			EditorGUILayout.Space(4);
+			EditorGUILayout.Space(8);
+			DrawAdvancedFoldout();
 		}
 
 		private void DrawAdvancedFoldout()
@@ -425,23 +399,19 @@ namespace Plysync.Editor
 			if (!_showAdvanced) return;
 
 			EditorGUI.indentLevel++;
-			_cloudBaseUrl = EditorGUILayout.TextField("Cloud API", _cloudBaseUrl);
-			_cloudToken = EditorGUILayout.PasswordField("Access Token Fallback", _cloudToken);
+			_localPublishServerBaseUrl = EditorGUILayout.TextField("Plyground Local Server", _localPublishServerBaseUrl);
 
 			using (new EditorGUILayout.HorizontalScope())
 			{
 				if (GUILayout.Button("Reset defaults", GUILayout.Width(140)))
 				{
-					_cloudBaseUrl = DefaultCloudBaseUrl;
+					_localPublishServerBaseUrl = DefaultLocalPublishServerBaseUrl;
 				}
 
 				if (GUILayout.Button("Save", GUILayout.Width(100)))
 				{
-					EditorPrefs.SetString("Plysync.CloudBaseUrl", _cloudBaseUrl);
-					EditorPrefs.SetString("Plysync.CloudToken", _cloudToken);
+					EditorPrefs.SetString("Plysync.LocalPublishServerBaseUrl", _localPublishServerBaseUrl);
 					EditorPrefs.SetBool("Plysync.ShowAdvanced", _showAdvanced);
-					SetCloudAuthStatus(HasCloudToken() ? "Loaded from Advanced settings." : "Not logged in.");
-					RebuildCloudClient();
 					Log("Advanced settings saved.");
 				}
 			}
@@ -463,10 +433,8 @@ namespace Plysync.Editor
 		private async Task BootstrapLocalProject()
 		{
 			if (_busy) return;
-			if (string.IsNullOrWhiteSpace(_cloudBaseUrl)) _cloudBaseUrl = DefaultCloudBaseUrl;
-
-			_cloudBaseUrl = (_cloudBaseUrl ?? "").Trim().TrimEnd('/');
-			RebuildCloudClient();
+			if (string.IsNullOrWhiteSpace(_localPublishServerBaseUrl)) _localPublishServerBaseUrl = DefaultLocalPublishServerBaseUrl;
+			_localPublishServerBaseUrl = (_localPublishServerBaseUrl ?? "").Trim().TrimEnd('/');
 
 			if (ImportSessionState.TryLoadPendingImportPath(out var pendingImportPath))
 			{
@@ -644,12 +612,6 @@ namespace Plysync.Editor
 				Log("No linked game detected (no marker).");
 				return;
 			}
-			if (!HasCloudToken())
-			{
-				Log("You must log in to Plyground before publishing.");
-				return;
-			}
-
 			_cts = new CancellationTokenSource();
 			var token = _cts.Token;
 
@@ -686,39 +648,27 @@ namespace Plysync.Editor
 					revision = ResolveRevisionFromSyncInfo(latest) ?? revision;
 				}
 
-				SetProgress("Building WebGL...", 0.35f);
-				var publisher = new Publisher(Log, SetProgress);
-				var zipPath = await publisher.BuildWebGLZip(_linkedGameId, revision, _devBuild, token);
-
-				SetProgress("Requesting upload URL...", 0.70f);
-				var fileBytes = new FileInfo(zipPath).Length;
-				var buildHash = HashUtil.Sha256File(zipPath);
-
-				var req = new PublishRequestUploadBody
+				var variationId = _linkedSyncInfo?.variationId ?? syncInfo?.variationId;
+				if (string.IsNullOrWhiteSpace(variationId))
 				{
-					gameId = _linkedGameId,
-					revision = revision,
-					unityVersion = Application.unityVersion,
-					buildHash = buildHash,
-					sizeBytes = fileBytes
-				};
+					Log("Variation ID was not found for this project.");
+					return;
+				}
 
-				var up = await _cloud.RequestUpload(req, token);
-
-				SetProgress("Uploading zip...", 0.82f);
-				await _cloud.PutFile(up.uploadUrl, zipPath, token);
-
-				SetProgress("Committing publish...", 0.93f);
-				var commit = await _cloud.Commit(new PublishCommitBody
+				SetProgress("Publishing via Plyground app...", 0.60f);
+				_lastPublishedGameUrl = "";
+				var localPublish = new LocalPublishClient(_localPublishServerBaseUrl, Log);
+				var response = await localPublish.Publish(variationId, token);
+				var publishedUrl = !string.IsNullOrWhiteSpace(response.gameUrl) ? response.gameUrl : response.url;
+				if (!response.success && string.IsNullOrWhiteSpace(publishedUrl))
 				{
-					artifactId = up.artifactId,
-					gameId = _linkedGameId,
-					revision = revision,
-					buildHash = buildHash
-				}, token);
+					var errorText = !string.IsNullOrWhiteSpace(response.error) ? response.error : response.message;
+					throw new Exception(string.IsNullOrWhiteSpace(errorText) ? "Local publish reported failure." : errorText);
+				}
 
+				_lastPublishedGameUrl = publishedUrl;
 				SetProgress("Done.", 1f);
-				Log($"Publish complete. releaseId={commit.releaseId} status={commit.status} url={commit.url}");
+				Log($"Publish complete. url={_lastPublishedGameUrl}");
 			}
 			catch (OperationCanceledException)
 			{
@@ -790,69 +740,6 @@ namespace Plysync.Editor
 			Repaint();
 		}
 
-		private async Task LoginToCloud()
-		{
-			if (_busy) return;
-
-			_cts = new CancellationTokenSource();
-			var token = _cts.Token;
-
-			try
-			{
-				BeginBusy("Plyground Login");
-				SetCloudAuthStatus("Opening browser login...");
-
-				var auth = new BrowserAuthSession(_cloudBaseUrl, Log);
-				var accessToken = await auth.Login(token);
-
-				_cloudToken = accessToken;
-				EditorPrefs.SetString("Plysync.CloudBaseUrl", _cloudBaseUrl);
-				EditorPrefs.SetString("Plysync.CloudToken", _cloudToken);
-				SetCloudAuthStatus("Logged in successfully.");
-				RebuildCloudClient();
-				Log("Plyground login complete.");
-			}
-			catch (OperationCanceledException)
-			{
-				SetCloudAuthStatus("Login canceled.");
-				Log("Plyground login cancelled.");
-			}
-			catch (Exception e)
-			{
-				SetCloudAuthStatus("Login failed.");
-				Log("Plyground login failed: " + e.Message);
-			}
-			finally
-			{
-				EndBusy();
-				Repaint();
-			}
-		}
-
-		private void LogOutOfCloud()
-		{
-			_cloudToken = "";
-			EditorPrefs.DeleteKey("Plysync.CloudToken");
-			SetCloudAuthStatus("Logged out.");
-			RebuildCloudClient();
-			Log("Cleared saved Plyground login.");
-		}
-
-		private bool HasCloudToken()
-		{
-			return !string.IsNullOrWhiteSpace(_cloudToken);
-		}
-
-		private void SetCloudAuthStatus(string value)
-		{
-			_cloudAuthStatus = string.IsNullOrWhiteSpace(value) ? "" : value.Trim();
-		}
-
-		private void RebuildCloudClient()
-		{
-			_cloud = new CloudPublishClient(_cloudBaseUrl, () => _cloudToken, Log);
-		}
-
 		private bool TryResolveLatestLinkedSyncInfo(out SyncBuildInfo info)
 		{
 			info = null;
@@ -875,6 +762,7 @@ namespace Plysync.Editor
 
 			return new SyncBuildInfo
 			{
+				variationId = marker.variationId,
 				path = marker.syncRootPath ?? marker.gameId,
 				environmentPath = marker.environmentPath,
 				gameItemPath = marker.gameItemPath,

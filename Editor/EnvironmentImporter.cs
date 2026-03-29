@@ -85,6 +85,7 @@ namespace Plyground.Editor
 				}
 
 				marker.gameId = gameId;
+				marker.variationId = info.variationId;
 				marker.revision = revision ?? "unknown";
 
 				// Persist sync/list data so we can operate offline

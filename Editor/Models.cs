@@ -8,6 +8,7 @@ namespace Plysync.Editor
 	public class SyncBuildInfo
 	{
 		public string name;
+		public string variationId;
 		public string path;
 		public string environmentPath;
 		public string gameItemPath;
