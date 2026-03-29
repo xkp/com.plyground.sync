@@ -232,11 +232,11 @@ namespace Plysync.Editor
 		{
 			var startedAt = DateTime.UtcNow;
 			var lastLogSeconds = -1;
+			var acceptTask = listener.AcceptTcpClientAsync();
 			while (true)
 			{
 				ct.ThrowIfCancellationRequested();
 
-				var acceptTask = listener.AcceptTcpClientAsync();
 				var completed = await Task.WhenAny(acceptTask, Task.Delay(100, ct));
 				if (completed == acceptTask)
 				{
