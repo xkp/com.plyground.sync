@@ -15,6 +15,7 @@ namespace Plysync.Editor
 	{
 		public string code;
 		public string redirectUri;
+		public string codeVerifier;
 	}
 
 	[Serializable]
@@ -46,7 +47,13 @@ namespace Plysync.Editor
 			var prefix = $"http://127.0.0.1:{CallbackPort}/";
 			var redirectUri = prefix + "callback/";
 			var state = CreateState();
-			var loginUrl = string.Format(AuthorizeUrlTemplate, UnityWebRequest.EscapeURL(redirectUri)) + "&state=" + UnityWebRequest.EscapeURL(state);
+			var codeVerifier = CreateCodeVerifier();
+			var codeChallenge = CreateCodeChallenge(codeVerifier);
+			var loginUrl =
+				string.Format(AuthorizeUrlTemplate, UnityWebRequest.EscapeURL(redirectUri)) +
+				"&state=" + UnityWebRequest.EscapeURL(state) +
+				"&code_challenge=" + UnityWebRequest.EscapeURL(codeChallenge) +
+				"&code_challenge_method=S256";
 
 			using (var listener = new HttpListener())
 			{
@@ -109,7 +116,7 @@ namespace Plysync.Editor
 					var code = request.QueryString["code"];
 					if (!string.IsNullOrWhiteSpace(code))
 					{
-						var exchangedToken = await ExchangeCodeForToken(code, redirectUri, ct);
+						var exchangedToken = await ExchangeCodeForToken(code, redirectUri, codeVerifier, ct);
 						await WriteHtml(context.Response, "Login complete", "You can close this browser window and return to Unity.");
 						return exchangedToken;
 					}
@@ -120,13 +127,14 @@ namespace Plysync.Editor
 			}
 		}
 
-		private async Task<string> ExchangeCodeForToken(string code, string redirectUri, CancellationToken ct)
+		private async Task<string> ExchangeCodeForToken(string code, string redirectUri, string codeVerifier, CancellationToken ct)
 		{
 			var url = $"{_baseUrl}/api/auth/unity/exchange";
 			var body = new BrowserAuthExchangeRequest
 			{
 				code = code,
-				redirectUri = redirectUri
+				redirectUri = redirectUri,
+				codeVerifier = codeVerifier
 			};
 
 			var json = JsonUtility.ToJson(body);
@@ -236,6 +244,33 @@ namespace Plysync.Editor
 				.TrimEnd('=')
 				.Replace('+', '-')
 				.Replace('/', '_');
+		}
+
+		private static string CreateCodeVerifier()
+		{
+			var bytes = new byte[32];
+			using (var rng = RandomNumberGenerator.Create())
+			{
+				rng.GetBytes(bytes);
+			}
+
+			return Convert.ToBase64String(bytes)
+				.TrimEnd('=')
+				.Replace('+', '-')
+				.Replace('/', '_');
+		}
+
+		private static string CreateCodeChallenge(string codeVerifier)
+		{
+			var bytes = Encoding.ASCII.GetBytes(codeVerifier ?? "");
+			using (var sha = SHA256.Create())
+			{
+				var hash = sha.ComputeHash(bytes);
+				return Convert.ToBase64String(hash)
+					.TrimEnd('=')
+					.Replace('+', '-')
+					.Replace('/', '_');
+			}
 		}
 	}
 }
