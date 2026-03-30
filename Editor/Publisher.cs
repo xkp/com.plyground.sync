@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,7 +21,7 @@ namespace Plysync.Editor
 			_progress = progress;
 		}
 
-		public async Task<string> BuildWebGLZip(string gameId, string revision, bool developmentBuild, CancellationToken ct)
+		public async Task<string> BuildWebGL(string gameId, string revision, bool developmentBuild, CancellationToken ct)
 		{
 			ct.ThrowIfCancellationRequested();
 
@@ -32,11 +31,16 @@ namespace Plysync.Editor
 			if (enabledScenes.Length == 0)
 				throw new Exception("No enabled scenes in Build Settings. Add your main scene(s).");
 
-			// Output folders
-			var baseOut = Path.Combine("Temp", "PlysyncBuilds", gameId, revision ?? "rev");
+			// Output folders: UnityProject/Build alongside Assets/
+			var safeGameId = SanitizePathSegment(string.IsNullOrWhiteSpace(gameId) ? "game" : gameId);
+			var safeRevision = SanitizePathSegment(string.IsNullOrWhiteSpace(revision) ? "rev" : revision);
+			var projectRoot = GetProjectRootAbsolutePath();
+			var baseOut = Path.Combine(projectRoot, "Build");
 			var buildDir = Path.Combine(baseOut, "WebGL");
-			var zipPath = Path.Combine(baseOut, $"WebGL_{gameId}_{revision}.zip");
 
+			Directory.CreateDirectory(baseOut);
+			if (Directory.Exists(buildDir))
+				Directory.Delete(buildDir, recursive: true);
 			Directory.CreateDirectory(buildDir);
 
 			// Switch target to WebGL
@@ -59,24 +63,31 @@ namespace Plysync.Editor
 			_log($"Building WebGL to: {buildDir}");
 			_progress("Running build pipeline...", 0.55f);
 
-			// Build is synchronous; wrap so UI stays responsive.
-			await Task.Run(() =>
-			{
-				var report = BuildPipeline.BuildPlayer(opts);
-				if (report.summary.result != BuildResult.Succeeded)
-					throw new Exception($"Build failed: {report.summary.result} errors={report.summary.totalErrors}");
-			}, ct);
+			// Unity build APIs should run on the editor thread.
+			await Task.Yield();
+			var report = BuildPipeline.BuildPlayer(opts);
+			if (report.summary.result != BuildResult.Succeeded)
+				throw new Exception($"Build failed: {report.summary.result} errors={report.summary.totalErrors}");
 
 			ct.ThrowIfCancellationRequested();
+			_progress("WebGL build complete.", 0.80f);
+			_log($"WebGL build created: {buildDir}");
+			return buildDir;
+		}
 
-			_progress("Zipping build...", 0.80f);
-			if (File.Exists(zipPath)) File.Delete(zipPath);
+		private static string GetProjectRootAbsolutePath()
+		{
+			return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+		}
 
-			// Zip entire buildDir contents
-			ZipFile.CreateFromDirectory(buildDir, zipPath, System.IO.Compression.CompressionLevel.Optimal, includeBaseDirectory: false);
-			_log($"Zip created: {zipPath}");
+		private static string SanitizePathSegment(string value)
+		{
+			if (string.IsNullOrWhiteSpace(value))
+				return "value";
 
-			return zipPath;
+			var invalidChars = Path.GetInvalidFileNameChars();
+			var sanitized = new string(value.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray()).Trim();
+			return string.IsNullOrWhiteSpace(sanitized) ? "value" : sanitized;
 		}
 	}
 }

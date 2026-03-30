@@ -618,7 +618,12 @@ namespace Plysync.Editor
 				if (string.IsNullOrWhiteSpace(variationId))
 					throw new Exception("Variation ID was not found for this project.");
 
-				SetProgress("Publishing via Plyground app...", 0.60f);
+				SetProgress("Building WebGL...", 0.12f);
+				var publisher = new Publisher(Log, SetProgress);
+				var buildPath = await publisher.BuildWebGL(variationId, revision, developmentBuild: false, token);
+				Log($"WebGL build ready: {buildPath}");
+
+				SetProgress("Publishing via Plyground app...", 0.85f);
 				_lastPublishedGameUrl = "";
 				var localPublish = new LocalPublishClient(_localPublishServerBaseUrl, Log);
 				var response = await localPublish.Publish(variationId, token);
