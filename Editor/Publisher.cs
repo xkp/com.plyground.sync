@@ -130,15 +130,8 @@ namespace Plysync.Editor
 			if (rootObjects.Length == 0)
 				throw new Exception("The loaded scene has no root GameObjects to inspect.");
 
-			_progress("Collecting scene object references...", 0.15f);
-			var dependencies = EditorUtility
-				.CollectDependencies(rootObjects)
-				.Where(obj => obj != null)
-				.Select(ToAssetPath)
-				.Where(path => !string.IsNullOrWhiteSpace(path))
-				.Distinct(StringComparer.OrdinalIgnoreCase)
-				.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-				.ToArray();
+			_progress("Collecting direct scene asset references...", 0.15f);
+			var dependencies = CollectDirectSceneAssetPaths(rootObjects, ct);
 
 			return BuildResourceSummary(
 				title: "Current Scene Resource Summary",
@@ -151,6 +144,80 @@ namespace Plysync.Editor
 		private static string GetProjectRootAbsolutePath()
 		{
 			return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+		}
+
+		private string[] CollectDirectSceneAssetPaths(GameObject[] rootObjects, CancellationToken ct)
+		{
+			var assetPaths = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			var sceneObjects = new System.Collections.Generic.List<UnityEngine.Object>();
+
+			foreach (var root in rootObjects)
+			{
+				ct.ThrowIfCancellationRequested();
+				if (root == null) continue;
+
+				foreach (var transform in root.GetComponentsInChildren<Transform>(true))
+				{
+					ct.ThrowIfCancellationRequested();
+					if (transform == null) continue;
+
+					var gameObject = transform.gameObject;
+					if (gameObject != null)
+						sceneObjects.Add(gameObject);
+
+					var components = gameObject != null
+						? gameObject.GetComponents<Component>()
+						: Array.Empty<Component>();
+					foreach (var component in components)
+					{
+						if (component != null)
+							sceneObjects.Add(component);
+					}
+				}
+			}
+
+			for (int i = 0; i < sceneObjects.Count; i++)
+			{
+				ct.ThrowIfCancellationRequested();
+				var obj = sceneObjects[i];
+				if (obj == null)
+					continue;
+
+				CollectSerializedAssetReferences(obj, assetPaths);
+				if ((i % 100) == 0)
+					_progress("Collecting direct scene asset references...", 0.15f + (0.20f * (i / (float)Math.Max(1, sceneObjects.Count))));
+			}
+
+			return assetPaths
+				.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+				.ToArray();
+		}
+
+		private static void CollectSerializedAssetReferences(UnityEngine.Object obj, System.Collections.Generic.ISet<string> assetPaths)
+		{
+			SerializedObject serializedObject;
+			try
+			{
+				serializedObject = new SerializedObject(obj);
+			}
+			catch
+			{
+				return;
+			}
+
+			var iterator = serializedObject.GetIterator();
+			var enterChildren = true;
+			while (iterator.NextVisible(enterChildren))
+			{
+				enterChildren = false;
+				if (iterator.propertyType != SerializedPropertyType.ObjectReference)
+					continue;
+
+				var reference = iterator.objectReferenceValue;
+				var assetPath = ToAssetPath(reference);
+				if (!string.IsNullOrWhiteSpace(assetPath))
+					assetPaths.Add(assetPath);
+			}
 		}
 
 		private string BuildResourceSummary(string title, string[] contextLines, string contextLabel, string[] dependencies, CancellationToken ct)
