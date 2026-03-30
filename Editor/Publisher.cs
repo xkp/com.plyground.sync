@@ -6,7 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.Build.Reporting;
+using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Plysync.Editor
 {
@@ -85,7 +87,7 @@ namespace Plysync.Editor
 			return buildDir;
 		}
 
-		public string CollectWebGLResourceSummary(CancellationToken ct)
+		public string CollectBuildSettingsResourceSummary(CancellationToken ct)
 		{
 			ct.ThrowIfCancellationRequested();
 
@@ -94,7 +96,7 @@ namespace Plysync.Editor
 			if (enabledScenes.Length == 0)
 				throw new Exception("No enabled scenes in Build Settings. Add your main scene(s).");
 
-			_progress("Collecting scene dependencies...", 0.15f);
+			_progress("Collecting build dependency references...", 0.10f);
 			var dependencies = AssetDatabase
 				.GetDependencies(enabledScenes, true)
 				.Where(path => !string.IsNullOrWhiteSpace(path))
@@ -102,6 +104,57 @@ namespace Plysync.Editor
 				.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
 				.ToArray();
 
+			return BuildResourceSummary(
+				title: "Build Settings Resource Summary",
+				contextLines: enabledScenes.Select(path => "- " + path).ToArray(),
+				contextLabel: $"Enabled scenes: {enabledScenes.Length}",
+				dependencies: dependencies,
+				ct: ct);
+		}
+
+		public string CollectCurrentSceneResourceSummary(CancellationToken ct)
+		{
+			ct.ThrowIfCancellationRequested();
+
+			var loadedScenes = Enumerable.Range(0, SceneManager.sceneCount)
+				.Select(SceneManager.GetSceneAt)
+				.Where(scene => scene.IsValid() && scene.isLoaded)
+				.ToArray();
+			if (loadedScenes.Length == 0)
+				throw new Exception("No loaded scenes are available in the editor.");
+
+			var rootObjects = loadedScenes
+				.SelectMany(scene => scene.GetRootGameObjects())
+				.Where(go => go != null)
+				.ToArray();
+			if (rootObjects.Length == 0)
+				throw new Exception("The loaded scene has no root GameObjects to inspect.");
+
+			_progress("Collecting scene object references...", 0.15f);
+			var dependencies = EditorUtility
+				.CollectDependencies(rootObjects)
+				.Where(obj => obj != null)
+				.Select(ToAssetPath)
+				.Where(path => !string.IsNullOrWhiteSpace(path))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+				.ToArray();
+
+			return BuildResourceSummary(
+				title: "Current Scene Resource Summary",
+				contextLines: loadedScenes.Select(scene => "- " + GetSceneLabel(scene)).ToArray(),
+				contextLabel: $"Loaded scenes: {loadedScenes.Length}\nRoot GameObjects: {rootObjects.Length}",
+				dependencies: dependencies,
+				ct: ct);
+		}
+
+		private static string GetProjectRootAbsolutePath()
+		{
+			return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+		}
+
+		private string BuildResourceSummary(string title, string[] contextLines, string contextLabel, string[] dependencies, CancellationToken ct)
+		{
 			var byExtension = new System.Collections.Generic.Dictionary<string, ResourceBucket>(StringComparer.OrdinalIgnoreCase);
 			var byRoot = new System.Collections.Generic.Dictionary<string, ResourceBucket>(StringComparer.OrdinalIgnoreCase);
 			var largestAssets = new System.Collections.Generic.List<ResourceEntry>();
@@ -157,12 +210,14 @@ namespace Plysync.Editor
 			_progress("Formatting resource summary...", 0.90f);
 
 			var sb = new System.Text.StringBuilder();
-			sb.AppendLine("WebGL Resource Summary");
-			sb.AppendLine($"Enabled scenes: {enabledScenes.Length}");
+			sb.AppendLine(title);
+			sb.AppendLine(contextLabel);
+			foreach (var line in contextLines)
+				sb.AppendLine(line);
 			sb.AppendLine($"Referenced assets: {dependencies.Length}");
 			sb.AppendLine($"Assets with measured size: {sizedAssetCount}");
 			sb.AppendLine($"Assets with unresolved size: {unresolvedAssetCount}");
-			sb.AppendLine($"Estimated total referenced size: {FormatBytes(totalBytes)}");
+			sb.AppendLine($"Estimated total referenced asset size: {FormatBytes(totalBytes)}");
 			sb.AppendLine();
 			sb.AppendLine("Largest asset types:");
 			foreach (var bucket in topExtensions)
@@ -179,13 +234,29 @@ namespace Plysync.Editor
 				sb.AppendLine($"- {FormatBytes(asset.bytes)}  {asset.path}");
 
 			_progress("Resource summary ready.", 1f);
-			_log("Collected WebGL resource summary.");
+			_log($"Collected {title.ToLowerInvariant()}.");
 			return sb.ToString();
 		}
 
-		private static string GetProjectRootAbsolutePath()
+		private static string ToAssetPath(UnityEngine.Object obj)
 		{
-			return Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+			if (obj == null)
+				return null;
+
+			if (!EditorUtility.IsPersistent(obj))
+				return null;
+
+			var path = AssetDatabase.GetAssetPath(obj);
+			return string.IsNullOrWhiteSpace(path) ? null : path;
+		}
+
+		private static string GetSceneLabel(Scene scene)
+		{
+			var path = scene.path;
+			if (!string.IsNullOrWhiteSpace(path))
+				return path;
+
+			return string.IsNullOrWhiteSpace(scene.name) ? "[Untitled Scene]" : scene.name;
 		}
 
 		private static void IncrementBucket(System.Collections.Generic.IDictionary<string, ResourceBucket> buckets, string key, long size)

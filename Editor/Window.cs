@@ -393,7 +393,7 @@ namespace Plysync.Editor
 
 			EditorGUILayout.Space(10);
 			EditorGUILayout.LabelField("Build Resources", EditorStyles.boldLabel);
-			EditorGUILayout.HelpBox("Collect Resource Info scans the enabled scenes and summarizes the assets likely included in the WebGL build so we can start optimizing size.", MessageType.None);
+			EditorGUILayout.HelpBox("Collect Resource Info shows both the broader Build Settings dependency summary and the stricter currently loaded scene reference summary.", MessageType.None);
 			GUI.enabled = !_busy;
 			if (GUILayout.Button("Collect Resource Info", GUILayout.Height(28)))
 				_ = CollectResourceInfo();
@@ -811,7 +811,10 @@ namespace Plysync.Editor
 				_publishErrorMessage = null;
 				var publisher = new Publisher(Log, SetProgress);
 				await Task.Yield();
-				_resourceSummary = publisher.CollectWebGLResourceSummary(token);
+				var buildSummary = publisher.CollectBuildSettingsResourceSummary(token);
+				token.ThrowIfCancellationRequested();
+				var sceneSummary = publisher.CollectCurrentSceneResourceSummary(token);
+				_resourceSummary = buildSummary + "\n\n========================================\n\n" + sceneSummary;
 				Log("Resource summary collected.");
 			}
 			catch (OperationCanceledException)
