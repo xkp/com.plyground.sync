@@ -34,6 +34,8 @@ namespace Plysync.Editor
 		private readonly StringBuilder _log = new StringBuilder();
 		private Vector2 _scroll;
 		private string _publishErrorMessage;
+		private string _resourceSummary;
+		private Vector2 _resourceSummaryScroll;
 
 		private bool _busy;
 		private float _progress;
@@ -388,6 +390,22 @@ namespace Plysync.Editor
 			if (GUILayout.Button("Publish", GUILayout.Height(30)))
 				_ = PublishLinkedGame();
 			GUI.enabled = true;
+
+			EditorGUILayout.Space(10);
+			EditorGUILayout.LabelField("Build Resources", EditorStyles.boldLabel);
+			EditorGUILayout.HelpBox("Collect Resource Info scans the enabled scenes and summarizes the assets likely included in the WebGL build so we can start optimizing size.", MessageType.None);
+			GUI.enabled = !_busy;
+			if (GUILayout.Button("Collect Resource Info", GUILayout.Height(28)))
+				_ = CollectResourceInfo();
+			GUI.enabled = true;
+
+			if (!string.IsNullOrWhiteSpace(_resourceSummary))
+			{
+				EditorGUILayout.Space(4);
+				_resourceSummaryScroll = EditorGUILayout.BeginScrollView(_resourceSummaryScroll, GUILayout.Height(180));
+				EditorGUILayout.TextArea(_resourceSummary, GUILayout.ExpandHeight(true));
+				EditorGUILayout.EndScrollView();
+			}
 
 			if (!string.IsNullOrWhiteSpace(_lastPublishedGameUrl))
 			{
@@ -777,6 +795,38 @@ namespace Plysync.Editor
 			catch (Exception e)
 			{
 				Log("Inbox scaffold setup failed: " + e.Message);
+			}
+		}
+
+		private async Task CollectResourceInfo()
+		{
+			if (_busy) return;
+
+			_cts = new CancellationTokenSource();
+			var token = _cts.Token;
+
+			try
+			{
+				BeginBusy("Collect Build Resources");
+				_publishErrorMessage = null;
+				var publisher = new Publisher(Log, SetProgress);
+				await Task.Yield();
+				_resourceSummary = publisher.CollectWebGLResourceSummary(token);
+				Log("Resource summary collected.");
+			}
+			catch (OperationCanceledException)
+			{
+				Log("Resource collection cancelled.");
+			}
+			catch (Exception e)
+			{
+				Log("Resource collection failed: " + e);
+				_resourceSummary = "Resource collection failed.\n" + e.Message;
+			}
+			finally
+			{
+				EndBusy();
+				Repaint();
 			}
 		}
 

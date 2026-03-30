@@ -41,7 +41,7 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(variationId))
 				throw new Exception("Variation ID is required for publish.");
 
-			var url = _baseUrl + "/api/publish";
+			var url = _baseUrl + "/publish";
 			var body = new LocalPublishRequest
 			{
 				variationId = variationId.Trim()
