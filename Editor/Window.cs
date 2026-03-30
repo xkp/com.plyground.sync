@@ -556,7 +556,7 @@ namespace Plysync.Editor
 
 		private Task SyncLinkedGame()
 		{
-			if (_busy) return;
+			if (_busy) return Task.CompletedTask;
 			if (string.IsNullOrWhiteSpace(_linkedGameId))
 			{
 				Log("No linked game detected (no marker).");
