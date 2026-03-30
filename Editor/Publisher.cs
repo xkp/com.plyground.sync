@@ -35,10 +35,8 @@ namespace Plysync.Editor
 			var safeGameId = SanitizePathSegment(string.IsNullOrWhiteSpace(gameId) ? "game" : gameId);
 			var safeRevision = SanitizePathSegment(string.IsNullOrWhiteSpace(revision) ? "rev" : revision);
 			var projectRoot = GetProjectRootAbsolutePath();
-			var baseOut = Path.Combine(projectRoot, "Build");
-			var buildDir = Path.Combine(baseOut, "WebGL");
+			var buildDir = Path.Combine(projectRoot, "Build");
 
-			Directory.CreateDirectory(baseOut);
 			if (Directory.Exists(buildDir))
 				Directory.Delete(buildDir, recursive: true);
 			Directory.CreateDirectory(buildDir);
