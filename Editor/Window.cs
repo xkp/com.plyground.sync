@@ -13,7 +13,8 @@ namespace Plysync.Editor
 {
 	public class PlysyncWindow : EditorWindow
 	{
-		private const string DefaultLocalPublishServerBaseUrl = "http://localhost:4300";
+		private const string DefaultLocalPublishServerBaseUrl = "http://localhost:3000";
+		private const string LegacyLocalPublishClientBaseUrl = "http://localhost:4300";
 		private const string DefaultLogoAssetPath = "Assets/plyground/Editor/logo.png";
 		private const string PackageLogoAssetPath = "Packages/ai.plyground.sync/Editor/logo.png";
 
@@ -63,6 +64,8 @@ namespace Plysync.Editor
 			_cache = new CacheStore();
 
 			_localPublishServerBaseUrl = EditorPrefs.GetString("Plysync.LocalPublishServerBaseUrl", DefaultLocalPublishServerBaseUrl);
+			if (string.Equals((_localPublishServerBaseUrl ?? "").Trim().TrimEnd('/'), LegacyLocalPublishClientBaseUrl, StringComparison.OrdinalIgnoreCase))
+				_localPublishServerBaseUrl = DefaultLocalPublishServerBaseUrl;
 			_showAdvanced = EditorPrefs.GetBool("Plysync.ShowAdvanced", false);
 			_logoTexture = LoadLogoTexture();
 			if (_log.Length == 0)
