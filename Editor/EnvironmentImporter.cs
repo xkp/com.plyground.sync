@@ -67,6 +67,11 @@ namespace Plyground.Editor
 			return marker != null;
 		}
 
+		public static void UpdateMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
+		{
+			TryEnsureMarker(gameId, revision, info, log);
+		}
+
 		private static void TryEnsureMarker(string gameId, string revision, SyncBuildInfo info, Action<string> log)
 		{
 			try

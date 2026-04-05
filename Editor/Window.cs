@@ -575,27 +575,52 @@ namespace Plysync.Editor
 			}
 		}
 
-		private Task SyncLinkedGame()
+		private async Task SyncLinkedGame()
 		{
-			if (_busy) return Task.CompletedTask;
+			if (_busy) return;
 			if (string.IsNullOrWhiteSpace(_linkedGameId))
 			{
 				Log("No linked game detected (no marker).");
-				return Task.CompletedTask;
+				return;
 			}
 
 			if (!TryResolveLatestLinkedSyncInfo(out var latest))
 			{
 				Log("Linked game files were not found on disk.");
-				return Task.CompletedTask;
+				return;
 			}
 
-			_linkedSyncInfo = latest;
-			_cache.SaveSyncInfo(latest);
-			_status = "Sync not implemented";
-			Log("Sync is not implemented yet. Future sync will match the current scene and apply changes instead of re-importing.");
-			Repaint();
-			return Task.CompletedTask;
+			_cts = new CancellationTokenSource();
+			var token = _cts.Token;
+
+			try
+			{
+				BeginBusy($"Sync: {latest.path}");
+				_linkedSyncInfo = latest;
+				EnsureVariationId(_linkedSyncInfo);
+
+				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
+				await orchestrator.RunSync(latest, token);
+
+				RefreshLinkedStateFromMarker();
+				_linkedSyncInfo = _cache.LoadSyncInfo(latest.path) ?? latest;
+				_status = "Synced";
+				Log("Sync complete.");
+			}
+			catch (OperationCanceledException)
+			{
+				Log("Sync cancelled.");
+			}
+			catch (Exception e)
+			{
+				Log("Sync failed: " + e);
+				_status = "Sync failed";
+			}
+			finally
+			{
+				EndBusy();
+				Repaint();
+			}
 		}
 
 		private async Task PublishLinkedGame()
@@ -630,7 +655,10 @@ namespace Plysync.Editor
 					_cache.SaveSyncInfo(latest);
 					_linkedSyncInfo = latest;
 					EnsureVariationId(_linkedSyncInfo);
-					Log("Sync before publish is not implemented yet. Publish will continue without applying scene changes.");
+					var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
+					await orchestrator.RunSync(latest, token);
+					RefreshLinkedStateFromMarker();
+					_linkedSyncInfo = _cache.LoadSyncInfo(latest.path) ?? latest;
 
 					revision = ResolveRevisionFromSyncInfo(latest) ?? revision;
 				}

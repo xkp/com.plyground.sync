@@ -168,6 +168,49 @@ using UnityEngine;
 			return ImportRunResult.Completed;
 		}
 
+		public async Task RunSync(SyncBuildInfo info, CancellationToken ct)
+		{
+			if (info == null) throw new Exception("SyncBuildInfo is null");
+			if (string.IsNullOrWhiteSpace(info.path)) throw new Exception("info.path is required");
+			if (string.IsNullOrWhiteSpace(info.gameItemPath)) throw new Exception("info.gameItemPath is required");
+			if (string.IsNullOrWhiteSpace(info.modulePath)) throw new Exception("info.modulePath is required");
+
+			var gameId = info.path;
+			var revision = ResolveRevision(info);
+			var cached = _cache.Read(gameId);
+
+			if (cached != null && revision != "unknown" && cached.lastImportedRevision == revision)
+			{
+				_log($"No sync changes detected. revision={revision}");
+				EnvironmentImporter.UpdateMarker(gameId, revision, info, _log);
+				_cache.SaveSyncInfo(info);
+				WriteCache(gameId, revision);
+				AssetDatabase.SaveAssets();
+				EditorSceneManager.SaveOpenScenes();
+				return;
+			}
+
+			_progress("Syncing game items...", 0.35f);
+			_log("Starting game item sync via PlygroundLoader.Update...");
+
+			ct.ThrowIfCancellationRequested();
+			await PlygroundLoader.Update(info.gameItemPath, info.modulePath);
+			ct.ThrowIfCancellationRequested();
+
+			_log("Game item sync finished.");
+
+			_progress("Saving synced assets...", 0.85f);
+			AssetDatabase.SaveAssets();
+			EditorSceneManager.SaveOpenScenes();
+
+			_progress("Writing sync cache...", 0.94f);
+			_cache.SaveSyncInfo(info);
+			WriteCache(gameId, revision);
+			EnvironmentImporter.UpdateMarker(gameId, revision, info, _log);
+
+			_progress("Done.", 1f);
+		}
+
 		// private void UpsertSceneMarker(string gameId, string revision, SyncBuildInfo info)
 		// {
 		// 	if (!EnvironmentImporter.TryGetMarker(out var marker) || marker == null)
@@ -327,6 +370,27 @@ using UnityEngine;
 				return 2;
 
 			return 3;
+		}
+
+		private string ResolveRevision(SyncBuildInfo info)
+		{
+			if (info == null || string.IsNullOrWhiteSpace(info.buildFilePath))
+				return "unknown";
+
+			if (!PathJsonLoader.TryLoadJsonFile<BuildJson>(info.buildFilePath, out var buildJson) || buildJson == null)
+				return "unknown";
+
+			return string.IsNullOrWhiteSpace(buildJson.revision) ? "unknown" : buildJson.revision;
+		}
+
+		private void WriteCache(string gameId, string revision)
+		{
+			_cache.Write(new PlysyncCache
+			{
+				gameId = gameId,
+				lastImportedRevision = revision,
+				lastImportedAtUtc = DateTime.UtcNow.ToString("o")
+			});
 		}
 
 		private static PackagesBlock MergePackages(PackagesBlock a, PackagesBlock b)
