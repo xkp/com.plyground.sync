@@ -195,7 +195,7 @@ using UnityEngine;
 			_log("Starting game item sync via PlygroundLoader.Update...");
 
 			ct.ThrowIfCancellationRequested();
-			await PlygroundLoader.Update(info.gameItemPath, info.buildFilePath, info.modulePath);
+			await PlygroundLoader.Update(info.gameItemPath, info.buildFilePath, info.modulePath, info.assetPath);
 			ct.ThrowIfCancellationRequested();
 
 			_log("Game item sync finished.");
