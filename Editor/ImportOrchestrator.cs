@@ -173,6 +173,7 @@ using UnityEngine;
 			if (info == null) throw new Exception("SyncBuildInfo is null");
 			if (string.IsNullOrWhiteSpace(info.path)) throw new Exception("info.path is required");
 			if (string.IsNullOrWhiteSpace(info.gameItemPath)) throw new Exception("info.gameItemPath is required");
+			if (string.IsNullOrWhiteSpace(info.buildFilePath)) throw new Exception("info.buildFilePath is required");
 			if (string.IsNullOrWhiteSpace(info.modulePath)) throw new Exception("info.modulePath is required");
 
 			var gameId = info.path;
@@ -194,7 +195,7 @@ using UnityEngine;
 			_log("Starting game item sync via PlygroundLoader.Update...");
 
 			ct.ThrowIfCancellationRequested();
-			await PlygroundLoader.Update(info.gameItemPath, info.modulePath);
+			await PlygroundLoader.Update(info.gameItemPath, info.buildFilePath, info.modulePath);
 			ct.ThrowIfCancellationRequested();
 
 			_log("Game item sync finished.");
