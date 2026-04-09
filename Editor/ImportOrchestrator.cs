@@ -3,6 +3,7 @@ using Plysync.Editor;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
@@ -61,12 +62,14 @@ using UnityEngine;
 			}
 
 			var moduleIds = ExtractModuleIds(buildJson);
+			string[] filesToRemove = Array.Empty<string>();
 			if (_local != null && moduleIds.Length > 0)
 			{
 				_log($"Resolved {moduleIds.Length} module id(s) from build.json.");
 				_progress("Resolving packages from modules...", 0.10f);
 
 				var resolvedPackages = _local.ResolvePackagesForModules(moduleIds, ct);
+				filesToRemove = _local.ResolveFilesToRemoveForModules(moduleIds, ct) ?? Array.Empty<string>();
 				packages = MergePackages(packages, resolvedPackages);
 			}
 			else if (moduleIds.Length > 0)
@@ -100,6 +103,12 @@ using UnityEngine;
 			else
 			{
 				_log("No packages block (or build.json missing). Skipping package install.");
+			}
+
+			if (filesToRemove.Length > 0)
+			{
+				_progress("Cleaning module files...", 0.24f);
+				RemoveModuleFiles(filesToRemove, ct);
 			}
 
 			// Revision-based cache short-circuit (only if we actually have a revision)
@@ -427,6 +436,121 @@ using UnityEngine;
 				.GroupBy(x => x.productId)
 				.Select(g => g.Last())
 				.ToArray();
+		}
+
+		private void RemoveModuleFiles(IEnumerable<string> relativePaths, CancellationToken ct)
+		{
+			var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+			var removedAny = false;
+
+			foreach (var rawRelativePath in relativePaths ?? Array.Empty<string>())
+			{
+				ct.ThrowIfCancellationRequested();
+
+				var relativePath = NormalizeRelativeProjectPath(rawRelativePath);
+				if (string.IsNullOrWhiteSpace(relativePath))
+					continue;
+
+				var absolutePath = Path.GetFullPath(Path.Combine(projectRoot, relativePath));
+				if (!IsWithinProjectRoot(projectRoot, absolutePath))
+				{
+					_log($"Skipped cleanup outside project root: {rawRelativePath}");
+					continue;
+				}
+
+				if (Directory.Exists(absolutePath))
+				{
+					removedAny |= ClearDirectoryContents(absolutePath, ct);
+					continue;
+				}
+
+				if (File.Exists(absolutePath))
+				{
+					File.Delete(absolutePath);
+					DeleteMetaIfPresent(absolutePath);
+					_log($"Removed file: {relativePath}");
+					removedAny = true;
+					continue;
+				}
+
+				_log($"Cleanup target not found: {relativePath}");
+			}
+
+			if (removedAny)
+				AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
+		}
+
+		private bool ClearDirectoryContents(string directoryPath, CancellationToken ct)
+		{
+			var removedAny = false;
+
+			foreach (var filePath in Directory.GetFiles(directoryPath))
+			{
+				ct.ThrowIfCancellationRequested();
+				File.Delete(filePath);
+				DeleteMetaIfPresent(filePath);
+				_log($"Removed file: {MakeProjectRelativePath(filePath)}");
+				removedAny = true;
+			}
+
+			foreach (var subdirectoryPath in Directory.GetDirectories(directoryPath))
+			{
+				ct.ThrowIfCancellationRequested();
+				Directory.Delete(subdirectoryPath, true);
+				DeleteMetaIfPresent(subdirectoryPath);
+				_log($"Removed folder: {MakeProjectRelativePath(subdirectoryPath)}");
+				removedAny = true;
+			}
+
+			return removedAny;
+		}
+
+		private static void DeleteMetaIfPresent(string path)
+		{
+			var metaPath = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + ".meta";
+			if (File.Exists(metaPath))
+				File.Delete(metaPath);
+		}
+
+		private static bool IsWithinProjectRoot(string projectRoot, string candidatePath)
+		{
+			var normalizedRoot = EnsureTrailingSeparator(Path.GetFullPath(projectRoot));
+			var normalizedCandidate = Path.GetFullPath(candidatePath);
+			return normalizedCandidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+		}
+
+		private static string EnsureTrailingSeparator(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+				return path;
+
+			if (path.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+				|| path.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+				return path;
+
+			return path + Path.DirectorySeparatorChar;
+		}
+
+		private static string NormalizeRelativeProjectPath(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+				return null;
+
+			return path
+				.Trim()
+				.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar)
+				.TrimStart(Path.DirectorySeparatorChar);
+		}
+
+		private static string MakeProjectRelativePath(string absolutePath)
+		{
+			var projectRoot = EnsureTrailingSeparator(Path.GetFullPath(Path.Combine(Application.dataPath, "..")));
+			var normalizedPath = Path.GetFullPath(absolutePath);
+			if (!normalizedPath.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase))
+				return normalizedPath;
+
+			return normalizedPath.Substring(projectRoot.Length)
+				.Replace(Path.DirectorySeparatorChar, '/');
 		}
 	}
 }

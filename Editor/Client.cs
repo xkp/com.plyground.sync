@@ -120,6 +120,81 @@ namespace Plysync.Editor
 			};
 		}
 
+		public string[] ResolveFilesToRemoveForModules(string[] moduleIds, CancellationToken ct)
+		{
+			if (moduleIds == null || moduleIds.Length == 0)
+				return Array.Empty<string>();
+
+			var filesToRemove = new List<string>();
+			var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			var modulesRoot = GetLocalModulesRoot();
+			if (string.IsNullOrWhiteSpace(modulesRoot) || !Directory.Exists(modulesRoot))
+			{
+				_log($"Local module cache folder not found: {modulesRoot}");
+				return Array.Empty<string>();
+			}
+
+			foreach (var bgm in EnumerateModuleBgms(moduleIds, modulesRoot, ct))
+			{
+				if (bgm?.filesToRemove == null || bgm.filesToRemove.Length == 0)
+					continue;
+
+				foreach (var rawPath in bgm.filesToRemove)
+				{
+					ct.ThrowIfCancellationRequested();
+
+					var relativePath = (rawPath ?? "").Trim();
+					if (string.IsNullOrWhiteSpace(relativePath))
+						continue;
+
+					if (seen.Add(relativePath))
+						filesToRemove.Add(relativePath);
+				}
+			}
+
+			return filesToRemove.ToArray();
+		}
+
+		private IEnumerable<ModuleBgm> EnumerateModuleBgms(string[] moduleIds, string modulesRoot, CancellationToken ct)
+		{
+			foreach (var rawModuleId in moduleIds)
+			{
+				ct.ThrowIfCancellationRequested();
+
+				var moduleId = (rawModuleId ?? "").Trim();
+				if (string.IsNullOrWhiteSpace(moduleId))
+					continue;
+
+				var moduleFolder = Path.Combine(modulesRoot, moduleId);
+				if (!Directory.Exists(moduleFolder))
+				{
+					_log($"Module folder not found for '{moduleId}': {moduleFolder}");
+					continue;
+				}
+
+				var bgmPath = Path.Combine(moduleFolder, "module.bgm");
+				if (!File.Exists(bgmPath))
+				{
+					_log($"module.bgm not found for module '{moduleId}': {bgmPath}");
+					continue;
+				}
+
+				ModuleBgm bgm;
+				try
+				{
+					var json = File.ReadAllText(bgmPath);
+					bgm = JsonUtility.FromJson<ModuleBgm>(json);
+				}
+				catch (Exception ex)
+				{
+					_log($"Failed to parse module.bgm for module '{moduleId}': {ex.Message}");
+					continue;
+				}
+
+				yield return bgm;
+			}
+		}
+
 		private static string GetLocalModulesRoot()
 		{
 			var userFolder = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -243,6 +318,7 @@ namespace Plysync.Editor
 			public string author;
 			public string url;
 			public ModuleBgmPackage[] packages;
+			public string[] filesToRemove;
 		}
 
 		[Serializable]
