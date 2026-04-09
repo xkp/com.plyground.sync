@@ -63,6 +63,8 @@ namespace Plysync.Editor
 				if (!ok) throw new Exception("Failed to switch build target to WebGL.");
 			}
 
+			await WaitForEditorToSettle(ct, "after switching build target");
+
 			// Configure options
 			var opts = new BuildPlayerOptions
 			{
@@ -77,6 +79,7 @@ namespace Plysync.Editor
 
 			// Unity build APIs should run on the editor thread.
 			await Task.Yield();
+			await WaitForEditorToSettle(ct, "before starting the build");
 			var report = BuildPipeline.BuildPlayer(opts);
 			if (report.summary.result != BuildResult.Succeeded)
 				throw new Exception($"Build failed: {report.summary.result} errors={report.summary.totalErrors}");
@@ -85,6 +88,23 @@ namespace Plysync.Editor
 			_progress("WebGL build complete.", 0.80f);
 			_log($"WebGL build created: {buildDir}");
 			return buildDir;
+		}
+
+		private async Task WaitForEditorToSettle(CancellationToken ct, string reason)
+		{
+			var loggedWait = false;
+			while (EditorApplication.isUpdating || EditorApplication.isCompiling)
+			{
+				ct.ThrowIfCancellationRequested();
+				if (!loggedWait)
+				{
+					_log($"Waiting for Unity to finish asset updates/script compilation {reason}...");
+					_progress("Waiting for Unity to finish compiling...", 0.50f);
+					loggedWait = true;
+				}
+
+				await Task.Delay(100, ct);
+			}
 		}
 
 		public string CollectBuildSettingsResourceSummary(CancellationToken ct)
