@@ -89,20 +89,17 @@ using UnityEngine;
  				ImportSessionState.SavePendingImportPath(info.path);
  				_log($"Prepared pending import resume state for: {info.path}");
  				_progress("Installing packages...", 0.15f);
- 				var packageInstallOutcome = await PackageInstaller.Install(packages, _log, ct);
+ 				var packagesChanged = await PackageInstaller.Install(packages, _log, ct);
 				ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
- 				_log(packageInstallOutcome == PackageInstallOutcome.NoChanges
- 					? "Package install completed without project changes."
- 					: "Package install completed with project changes.");
+ 				_log(packagesChanged
+ 					? "Package install completed with project changes."
+ 					: "Package install completed without project changes.");
 
-				if (packageInstallOutcome == PackageInstallOutcome.ChangedRequiresReload)
+				if (packagesChanged)
 				{
-					_log("Package changes detected. Deferring the rest of the import until Unity reloads assemblies.");
+					_log("A package was imported. Deferring the rest of the import so Unity can finish processing before resume.");
 					return ImportRunResult.DeferredForReload;
 				}
-
-				if (packageInstallOutcome == PackageInstallOutcome.ChangedWithoutReload)
-					_log("Package changes did not trigger a Unity reload. Continuing import in the current editor session.");
  			}
 			else
 			{
