@@ -94,12 +94,6 @@ using UnityEngine;
  				_log(packagesChanged
  					? "Package install completed with project changes."
  					: "Package install completed without project changes.");
-
-				if (packagesChanged)
-				{
-					_log("A package was imported. Deferring the rest of the import so Unity can finish processing before resume.");
-					return ImportRunResult.DeferredForReload;
-				}
  			}
 			else
 			{

@@ -57,8 +57,6 @@ namespace Plysync.Editor
 		private Texture2D _logoTexture;
 		private GUIStyle _headerBodyStyle;
 		private GUIStyle _gamePopupStyle;
-		private bool _pendingImportResumeScheduled;
-		private double _pendingImportResumeEarliestTime;
 
 		[MenuItem("Plyground/Sync")]
 		public static void Open() => GetWindow<PlysyncWindow>("plyground");
@@ -89,8 +87,6 @@ namespace Plysync.Editor
 			EditorPrefs.SetString("Plysync.LocalPublishServerBaseUrl", _localPublishServerBaseUrl);
 			EditorPrefs.SetBool("Plysync.ShowAdvanced", _showAdvanced);
 
-			EditorApplication.update -= TryResumeDeferredImport;
-			_pendingImportResumeScheduled = false;
 			_cts?.Cancel();
 			_cts?.Dispose();
 		}
@@ -546,8 +542,7 @@ namespace Plysync.Editor
 				if (result == ImportRunResult.DeferredForReload)
 				{
 					_status = "Waiting for reload";
-					Log("Import paused so Unity can finish processing packages. The import will resume automatically.");
-					SchedulePendingImportResume();
+					Log("Import paused so Unity can reload assemblies. The import will resume automatically.");
 					return;
 				}
 
@@ -736,8 +731,6 @@ namespace Plysync.Editor
 			_progress = 0;
 			_step = step;
 			_status = "Busy";
-			EditorApplication.update -= TryResumeDeferredImport;
-			_pendingImportResumeScheduled = false;
 			Log("== " + step + " ==");
 		}
 
@@ -764,51 +757,6 @@ namespace Plysync.Editor
 			if (_log.Length > 200_000) _log.Remove(0, 50_000);
 			ImportSessionState.SaveLog(_log.ToString());
 			Repaint();
-		}
-
-		private void SchedulePendingImportResume()
-		{
-			if (_pendingImportResumeScheduled)
-				return;
-
-			_pendingImportResumeScheduled = true;
-			_pendingImportResumeEarliestTime = EditorApplication.timeSinceStartup + 1.0d;
-			EditorApplication.update -= TryResumeDeferredImport;
-			EditorApplication.update += TryResumeDeferredImport;
-		}
-
-		private void TryResumeDeferredImport()
-		{
-			if (this == null)
-			{
-				EditorApplication.update -= TryResumeDeferredImport;
-				return;
-			}
-
-			if (!_pendingImportResumeScheduled || _busy)
-				return;
-
-			if (EditorApplication.timeSinceStartup < _pendingImportResumeEarliestTime)
-				return;
-
-			if (EditorApplication.isCompiling || EditorApplication.isUpdating)
-				return;
-
-			if (!ImportSessionState.TryLoadPendingImportPath(out _))
-			{
-				EditorApplication.update -= TryResumeDeferredImport;
-				_pendingImportResumeScheduled = false;
-				return;
-			}
-
-			EditorApplication.update -= TryResumeDeferredImport;
-			_pendingImportResumeScheduled = false;
-			Log("Unity is idle again. Resuming deferred import.");
-			EditorApplication.delayCall += () =>
-			{
-				if (this == null || _busy) return;
-				_ = BootstrapLocalProject();
-			};
 		}
 
 		private bool TryResolveLatestLinkedSyncInfo(out SyncBuildInfo info)

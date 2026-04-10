@@ -39,6 +39,11 @@ using UnityEngine.Networking;
 					changed |= await InstallUnityPackages(pkgs.value, log, ct);
 				}
 
+				if (changed)
+				{
+					await WaitForEditorToSettle(log, ct);
+				}
+
 				log(changed ? "Package install changed the project." : "Package install found no changes.");
 				return changed;
 			}
@@ -142,12 +147,26 @@ using UnityEngine.Networking;
 					if (!string.IsNullOrWhiteSpace(fingerprint))
 						EditorPrefs.SetString(installedKey, fingerprint);
 					changed = true;
-					log("Stopping package installation after one imported package so Unity can finish processing before the next resume.");
-					break;
 				}
 
 				return Task.FromResult(changed);
 			}
+
+		private static async Task WaitForEditorToSettle(Action<string> log, CancellationToken ct)
+		{
+			var loggedWait = false;
+			while (EditorApplication.isUpdating || EditorApplication.isCompiling)
+			{
+				ct.ThrowIfCancellationRequested();
+				if (!loggedWait)
+				{
+					log("Waiting for Unity to finish asset updates/script compilation after importing packages...");
+					loggedWait = true;
+				}
+
+				await Task.Delay(100, ct);
+			}
+		}
 
 		private static bool TryResolveExistingLocalPath(string source, out string localPath)
 		{
