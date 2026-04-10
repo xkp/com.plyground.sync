@@ -83,16 +83,17 @@ using UnityEngine;
 
 			// Packages must be installed before any import work so downstream importers
 			// can rely on the required types and assets already being available.
-			if (packages != null)
-			{
-				_cache.SaveSyncInfo(info);
-				ImportSessionState.SavePendingImportPath(info.path);
-				_log($"Prepared pending import resume state for: {info.path}");
-				_progress("Installing packages...", 0.15f);
-				var packagesChanged = await PackageInstaller.Install(packages, _log, ct);
-				_log(packagesChanged
-					? "Package install completed with project changes. Continuing import."
-					: "Package install completed without project changes.");
+ 			if (packages != null)
+ 			{
+ 				_cache.SaveSyncInfo(info);
+ 				ImportSessionState.SavePendingImportPath(info.path);
+ 				_log($"Prepared pending import resume state for: {info.path}");
+ 				_progress("Installing packages...", 0.15f);
+ 				var packagesChanged = await PackageInstaller.Install(packages, _log, ct);
+				ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
+ 				_log(packagesChanged
+ 					? "Package install completed with project changes. Continuing import."
+ 					: "Package install completed without project changes.");
 
 				if (packagesChanged)
 				{
@@ -152,13 +153,14 @@ using UnityEngine;
 			);
 			_log("Game items import finished.");
 
-			// Save
-			_progress("Saving assets...", 0.90f);
-			AssetDatabase.SaveAssets();
-			EditorSceneManager.SaveOpenScenes();
+ 			// Save
+ 			_progress("Saving assets...", 0.90f);
+ 			AssetDatabase.SaveAssets();
+ 			EditorSceneManager.SaveOpenScenes();
+			ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
 
-			// Cache + persist sync info
-			_progress("Writing cache...", 0.94f);
+ 			// Cache + persist sync info
+ 			_progress("Writing cache...", 0.94f);
 
 			_cache.SaveSyncInfo(info);
 
@@ -197,6 +199,7 @@ using UnityEngine;
 				WriteCache(gameId, revision);
 				AssetDatabase.SaveAssets();
 				EditorSceneManager.SaveOpenScenes();
+				ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
 				return;
 			}
 
@@ -212,6 +215,7 @@ using UnityEngine;
 			_progress("Saving synced assets...", 0.85f);
 			AssetDatabase.SaveAssets();
 			EditorSceneManager.SaveOpenScenes();
+			ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
 
 			_progress("Writing sync cache...", 0.94f);
 			_cache.SaveSyncInfo(info);
