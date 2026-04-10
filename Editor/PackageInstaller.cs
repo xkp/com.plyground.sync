@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
+using UnityEditor.Compilation;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using UnityEngine;
@@ -14,16 +15,23 @@ using UnityEngine.Networking;
 
 	namespace Plysync.Editor
 	{
+		public enum PackageInstallOutcome
+		{
+			NoChanges,
+			ChangedWithoutReload,
+			ChangedRequiresReload
+		}
+
 		public static class PackageInstaller
 		{
 			private const string InstalledUnityPackagePrefix = "Plysync.InstalledUnityPackage.";
 
-			public static async Task<bool> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
+			public static async Task<PackageInstallOutcome> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
 			{
 				if (pkgs == null)
 				{
 					log("No packages block provided.");
-					return false;
+					return PackageInstallOutcome.NoChanges;
 				}
 
 				SortInPlace(pkgs);
@@ -34,18 +42,24 @@ using UnityEngine.Networking;
 				//{
 				//	changed |= await InstallUpmPackages(pkgs.upm, log, ct);
 			//}
-			if (pkgs.value != null && pkgs.value.Length > 0)
+				if (pkgs.value != null && pkgs.value.Length > 0)
 			{
 				changed |= await InstallUnityPackages(pkgs.value, log, ct);
 			}
 
+				var requiresReload = false;
 				if (changed)
 				{
-					await RebuildTypes(log, ct);
+					requiresReload = await RebuildTypes(log, ct);
 				}
 
 				log(changed ? "Package install changed the project." : "Package install found no changes.");
-				return changed;
+				if (!changed)
+					return PackageInstallOutcome.NoChanges;
+
+				return requiresReload
+					? PackageInstallOutcome.ChangedRequiresReload
+					: PackageInstallOutcome.ChangedWithoutReload;
 			}
 
 		private static void SortInPlace(PackagesBlock pkgs)
@@ -152,35 +166,84 @@ using UnityEngine.Networking;
 				return changed;
 		}
 
-			private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
+			private static async Task<bool> RebuildTypes(Action<string> log, CancellationToken ct)
 			{
 				log("Rebuilding types after package install...");
-				AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+				var sawCompilation = false;
+				void OnCompilationStarted(object _) => sawCompilation = true;
 
-				await WaitForEditorToSettle(ct);
+				CompilationPipeline.compilationStarted += OnCompilationStarted;
+				try
+				{
+					AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+					CompilationPipeline.RequestScriptCompilation();
 
-			// Build a name->Type map so later Type.GetType calls are likely to hit warm metadata.
-			var allTypes = TypeCache.GetTypesDerivedFrom<object>();
-			var map = new Dictionary<string, Type>(StringComparer.Ordinal);
-			foreach (var t in allTypes)
+					var editorBecameBusy = await WaitForEditorToSettle(log, ct);
+
+					// Build a name->Type map so later Type.GetType calls are likely to hit warm metadata.
+					var allTypes = TypeCache.GetTypesDerivedFrom<object>();
+					var map = new Dictionary<string, Type>(StringComparer.Ordinal);
+					foreach (var t in allTypes)
+					{
+						ct.ThrowIfCancellationRequested();
+						if (t == null || string.IsNullOrWhiteSpace(t.FullName)) continue;
+						map[t.FullName] = t;
+						map[t.Name] = t;
+					}
+
+					log($"Type rebuild complete. Cached {map.Count} names.");
+					if (!editorBecameBusy && !sawCompilation)
+						log("Unity did not enter a compile/update cycle after package install. Continuing import without waiting for an editor restart.");
+
+					return editorBecameBusy || sawCompilation;
+				}
+				finally
+				{
+					CompilationPipeline.compilationStarted -= OnCompilationStarted;
+				}
+			}
+
+			private static async Task<bool> WaitForEditorToSettle(Action<string> log, CancellationToken ct)
 			{
-				ct.ThrowIfCancellationRequested();
-				if (t == null || string.IsNullOrWhiteSpace(t.FullName)) continue;
-				map[t.FullName] = t;
-				map[t.Name] = t;
-			}
+				const int pollDelayMs = 100;
+				const int busyStartGraceMs = 3000;
+				const int stableQuietMs = 500;
 
-				log($"Type rebuild complete. Cached {map.Count} names.");
-			}
+				var sawBusy = EditorApplication.isUpdating || EditorApplication.isCompiling;
+				var waitedForBusyMs = 0;
+				var quietMs = sawBusy ? 0 : stableQuietMs;
+				var loggedWait = false;
 
-		private static async Task WaitForEditorToSettle(CancellationToken ct)
-		{
-			while (EditorApplication.isUpdating || EditorApplication.isCompiling)
-			{
-				ct.ThrowIfCancellationRequested();
-				await Task.Delay(100, ct);
+				while (true)
+				{
+					ct.ThrowIfCancellationRequested();
+
+					var isBusy = EditorApplication.isUpdating || EditorApplication.isCompiling;
+					if (isBusy)
+					{
+						sawBusy = true;
+						quietMs = 0;
+						if (!loggedWait)
+						{
+							log("Waiting for Unity to finish asset updates/script compilation after package install...");
+							loggedWait = true;
+						}
+					}
+					else
+					{
+						quietMs += pollDelayMs;
+						if (!sawBusy && waitedForBusyMs >= busyStartGraceMs)
+							return false;
+
+						if (sawBusy && quietMs >= stableQuietMs)
+							return true;
+					}
+
+					await Task.Delay(pollDelayMs, ct);
+					if (!sawBusy)
+						waitedForBusyMs += pollDelayMs;
+				}
 			}
-		}
 
 		private static bool TryResolveExistingLocalPath(string source, out string localPath)
 		{
