@@ -29,6 +29,7 @@ namespace Plysync.Editor
 		private string _lastPublishedGameUrl = "";
 
 		private bool _showAdvanced;
+		private bool _showOptions;
 
 		private string _status = "Starting...";
 		private readonly StringBuilder _log = new StringBuilder();
@@ -36,6 +37,8 @@ namespace Plysync.Editor
 		private string _publishErrorMessage;
 		private string _resourceSummary;
 		private Vector2 _resourceSummaryScroll;
+		private bool _showLogs;
+		private bool _showResourceInfo;
 
 		private bool _busy;
 		private float _progress;
@@ -53,7 +56,7 @@ namespace Plysync.Editor
 		private string _linkedGameId;          // marker.gameId (we store SyncBuildInfo.path here)
 		private string _linkedRevision;        // marker.revision (optional)
 
-		private bool _autoSyncBeforePublish = true;
+		private bool _autoSyncBeforePublish = false;
 		private Texture2D _logoTexture;
 		private GUIStyle _headerBodyStyle;
 		private GUIStyle _gamePopupStyle;
@@ -402,7 +405,7 @@ namespace Plysync.Editor
 			EditorGUILayout.LabelField("Publish (WebGL)", EditorStyles.boldLabel);
 			EditorGUILayout.HelpBox("Publish sends this project's variation ID to the local Plyground app. The Plyground app only needs to be running when you click Publish.", MessageType.Info);
 
-			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
+			DrawOptionsFoldout();
 
 			if (string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId))
 				EditorGUILayout.HelpBox("Variation ID will be resolved when you click Publish. If it cannot be found then, publish will show an error.", MessageType.Info);
@@ -423,13 +426,7 @@ namespace Plysync.Editor
 				_ = CollectResourceInfo();
 			GUI.enabled = true;
 
-			if (!string.IsNullOrWhiteSpace(_resourceSummary))
-			{
-				EditorGUILayout.Space(4);
-				_resourceSummaryScroll = EditorGUILayout.BeginScrollView(_resourceSummaryScroll, GUILayout.Height(180));
-				EditorGUILayout.TextArea(_resourceSummary, GUILayout.ExpandHeight(true));
-				EditorGUILayout.EndScrollView();
-			}
+			DrawResourceInfoSection();
 
 			if (!string.IsNullOrWhiteSpace(_lastPublishedGameUrl))
 			{
@@ -468,11 +465,37 @@ namespace Plysync.Editor
 			EditorGUI.indentLevel--;
 		}
 
+		private void DrawOptionsFoldout()
+		{
+			_showOptions = EditorGUILayout.Foldout(_showOptions, "Options", true);
+			if (!_showOptions) return;
+
+			EditorGUI.indentLevel++;
+			_autoSyncBeforePublish = EditorGUILayout.Toggle("Sync before publish", _autoSyncBeforePublish);
+			EditorGUI.indentLevel--;
+		}
+
 		private void DrawLogs()
 		{
-			EditorGUILayout.LabelField("Logs", EditorStyles.boldLabel);
+			_showLogs = EditorGUILayout.Foldout(_showLogs, "Logs", true);
+			if (!_showLogs) return;
+
 			_scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.Height(220));
 			EditorGUILayout.TextArea(_log.ToString(), GUILayout.ExpandHeight(true));
+			EditorGUILayout.EndScrollView();
+		}
+
+		private void DrawResourceInfoSection()
+		{
+			if (string.IsNullOrWhiteSpace(_resourceSummary))
+				return;
+
+			_showResourceInfo = EditorGUILayout.Foldout(_showResourceInfo, "Resource Info", true);
+			if (!_showResourceInfo) return;
+
+			EditorGUILayout.Space(4);
+			_resourceSummaryScroll = EditorGUILayout.BeginScrollView(_resourceSummaryScroll, GUILayout.Height(180));
+			EditorGUILayout.TextArea(_resourceSummary, GUILayout.ExpandHeight(true));
 			EditorGUILayout.EndScrollView();
 		}
 
@@ -722,7 +745,7 @@ namespace Plysync.Editor
 				_lastPublishedGameUrl = "";
 				var localPublish = new LocalPublishClient(_localPublishServerBaseUrl, Log);
 				var response = await localPublish.Publish(variationId, token);
-				var publishedUrl = !string.IsNullOrWhiteSpace(response.gameUrl) ? response.gameUrl : response.url;
+				var publishedUrl = !string.IsNullOrWhiteSpace(response.liveUrl) ? response.liveUrl : response.url;
 				if (!response.success && string.IsNullOrWhiteSpace(publishedUrl))
 				{
 					var errorText = !string.IsNullOrWhiteSpace(response.error) ? response.error : response.message;
