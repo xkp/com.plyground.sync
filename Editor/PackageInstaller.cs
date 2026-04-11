@@ -41,7 +41,7 @@ using UnityEngine.Networking;
 
 				if (changed)
 				{
-					await WaitForEditorToSettle(log, ct);
+					await RebuildTypes(log, ct);
 				}
 
 				log(changed ? "Package install changed the project." : "Package install found no changes.");
@@ -150,6 +150,27 @@ using UnityEngine.Networking;
 				}
 
 				return Task.FromResult(changed);
+			}
+
+			private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
+			{
+				log("Rebuilding types after package install...");
+				AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+
+				await WaitForEditorToSettle(log, ct);
+
+				// Build a name->Type map so later Type.GetType calls are likely to hit warm metadata.
+				var allTypes = TypeCache.GetTypesDerivedFrom<object>();
+				var map = new Dictionary<string, Type>(StringComparer.Ordinal);
+				foreach (var t in allTypes)
+				{
+					ct.ThrowIfCancellationRequested();
+					if (t == null || string.IsNullOrWhiteSpace(t.FullName)) continue;
+					map[t.FullName] = t;
+					map[t.Name] = t;
+				}
+
+				log($"Type rebuild complete. Cached {map.Count} names.");
 			}
 
 		private static async Task WaitForEditorToSettle(Action<string> log, CancellationToken ct)
