@@ -207,17 +207,17 @@ namespace Plysync.Editor
 
 		private void DrawBottomBar()
 		{
+			var showPendingResume = TryGetPendingResumeLabel(out var helpText);
 			using (new EditorGUILayout.HorizontalScope())
 			{
 				GUILayout.Label($"Status: {_status}", GUILayout.ExpandWidth(true));
-				var hasPendingResume = TryGetPendingResumeLabel(out _);
-				GUI.enabled = hasPendingResume;
-				if (GUILayout.Button("Continue", GUILayout.Width(110)))
+				GUI.enabled = showPendingResume;
+				if (showPendingResume && GUILayout.Button("Continue", GUILayout.Width(110)))
 					TriggerPendingResume();
 				GUI.enabled = true;
 			}
 
-			if (TryGetPendingResumeLabel(out var helpText))
+			if (showPendingResume)
 				EditorGUILayout.HelpBox(helpText, MessageType.Info);
 		}
 
@@ -594,7 +594,7 @@ namespace Plysync.Editor
 				if (result == ImportRunResult.DeferredForReload)
 				{
 					_status = "Waiting for reload";
-					Log("Import paused so Unity can reload assemblies. The import will resume automatically.");
+					Log("Import paused so Unity can reload assemblies. It should resume automatically. If it stalls, click Continue or close and reopen the Sync window.");
 					return;
 				}
 
@@ -722,7 +722,7 @@ namespace Plysync.Editor
 				if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
 				{
 					ImportSessionState.SavePendingPublish(_linkedGameId, variationId, revision);
-					Log("Publish paused while Unity switches the build target to WebGL. The publish will resume automatically.");
+					Log("Publish paused while Unity switches the build target to WebGL. It should resume automatically. If it stalls, click Continue or close and reopen the Sync window.");
 					SetProgress("Switching build target to WebGL...", 0.12f);
 					var ok = EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.WebGL, BuildTarget.WebGL);
 					if (!ok)
@@ -831,13 +831,19 @@ namespace Plysync.Editor
 		{
 			if (ImportSessionState.TryLoadPendingImportPath(out _))
 			{
-				label = "A pending import can be resumed manually if Unity did not continue automatically.";
+				label = "A pending import is waiting for Unity to resume. If it stalls, click Continue or close and reopen the Sync window.";
 				return true;
 			}
 
 			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
 			{
-				label = "A pending publish can be resumed manually if Unity did not continue automatically.";
+				if (IsWaitingOnLocalPublishRequest())
+				{
+					label = null;
+					return false;
+				}
+
+				label = "A pending publish is waiting for Unity to resume. If it stalls, click Continue or close and reopen the Sync window.";
 				return true;
 			}
 
@@ -845,11 +851,16 @@ namespace Plysync.Editor
 			return false;
 		}
 
+		private bool IsWaitingOnLocalPublishRequest()
+		{
+			return _busy && string.Equals(_step, "Publishing via Plyground app...", StringComparison.Ordinal);
+		}
+
 		private void TriggerPendingResume()
 		{
 			if (_busy)
 			{
-				Log("Manual continue requested while Unity was still marked busy. Cancelling the current wait and retrying resume.");
+				Log("Manual continue requested while Unity was still marked busy. Cancelling the current wait and restarting the Sync window so the pending operation can resume.");
 				_cts?.Cancel();
 			}
 
