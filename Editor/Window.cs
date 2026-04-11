@@ -64,23 +64,28 @@ namespace Plysync.Editor
 		public static void ResumePendingImport()
 		{
 			var window = GetWindow<PlysyncWindow>("plyground");
-			EditorApplication.delayCall += () =>
-			{
-				if (window == null) return;
-				window.RefreshLinkedStateFromMarker();
-				_ = window.BootstrapLocalProject();
-				window.Repaint();
-			};
+			QueueBootstrapResume(window);
 		}
 
 		public static void ResumePendingPublish()
 		{
 			var window = GetWindow<PlysyncWindow>("plyground");
+			QueueBootstrapResume(window);
+		}
+
+		private static void QueueBootstrapResume(PlysyncWindow window)
+		{
 			EditorApplication.delayCall += () =>
 			{
 				if (window == null) return;
+				if (window._busy)
+				{
+					QueueBootstrapResume(window);
+					return;
+				}
+
 				window.RefreshLinkedStateFromMarker();
-				_ = window.ResumePendingPublishInternal();
+				_ = window.BootstrapLocalProject();
 				window.Repaint();
 			};
 		}
@@ -205,7 +210,15 @@ namespace Plysync.Editor
 			using (new EditorGUILayout.HorizontalScope())
 			{
 				GUILayout.Label($"Status: {_status}", GUILayout.ExpandWidth(true));
+				var hasPendingResume = TryGetPendingResumeLabel(out _);
+				GUI.enabled = hasPendingResume;
+				if (GUILayout.Button("Continue", GUILayout.Width(110)))
+					TriggerPendingResume();
+				GUI.enabled = true;
 			}
+
+			if (TryGetPendingResumeLabel(out var helpText))
+				EditorGUILayout.HelpBox(helpText, MessageType.Info);
 		}
 
 		private void DrawHeaderPanel(UiState state)
@@ -377,13 +390,8 @@ namespace Plysync.Editor
 				);
 			}
 
-			EditorGUILayout.HelpBox(
-				"Imported Plyground project. It may or may not need syncing depending on whether the source payload changed.",
-				MessageType.Info
-			);
-
 			EditorGUILayout.LabelField("Sync", EditorStyles.boldLabel);
-			EditorGUILayout.HelpBox("Sync reloads the detected local Plyground files from disk.", MessageType.None);
+			EditorGUILayout.HelpBox("Sync reloads this imported Plyground project from the local source files on disk so Unity reflects the latest generated content.", MessageType.Info);
 
 			using (new EditorGUILayout.HorizontalScope())
 			{
@@ -819,6 +827,59 @@ namespace Plysync.Editor
 			Repaint();
 		}
 
+		private bool TryGetPendingResumeLabel(out string label)
+		{
+			if (ImportSessionState.TryLoadPendingImportPath(out _))
+			{
+				label = "A pending import can be resumed manually if Unity did not continue automatically.";
+				return true;
+			}
+
+			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
+			{
+				label = "A pending publish can be resumed manually if Unity did not continue automatically.";
+				return true;
+			}
+
+			label = null;
+			return false;
+		}
+
+		private void TriggerPendingResume()
+		{
+			if (_busy)
+			{
+				Log("Manual continue requested while Unity was still marked busy. Cancelling the current wait and retrying resume.");
+				_cts?.Cancel();
+			}
+
+			if (ImportSessionState.TryLoadPendingImportPath(out _))
+			{
+				Log("Manual continue requested for the pending import.");
+				RestartWindowAndResume();
+				return;
+			}
+
+			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
+			{
+				Log("Manual continue requested for the pending publish.");
+				ImportSessionState.RequestPendingPublishForceContinue();
+				RestartWindowAndResume();
+			}
+		}
+
+		private void RestartWindowAndResume()
+		{
+			var window = this;
+			EditorApplication.delayCall += () =>
+			{
+				if (window != null)
+					window.Close();
+
+				Open();
+			};
+		}
+
 		private bool TryResolveLatestLinkedSyncInfo(out SyncBuildInfo info)
 		{
 			info = null;
@@ -950,7 +1011,6 @@ namespace Plysync.Editor
 				if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
 					throw new Exception("Unity did not finish switching to WebGL before the publish resume.");
 
-				ImportSessionState.ClearPendingPublish();
 				SetProgress("Building WebGL...", 0.12f);
 				var publisher = new Publisher(Log, SetProgress);
 				var buildPath = await publisher.BuildWebGL(variationId, revision, developmentBuild: false, token);
@@ -969,6 +1029,7 @@ namespace Plysync.Editor
 
 				_lastPublishedGameUrl = publishedUrl;
 				_publishErrorMessage = null;
+				ImportSessionState.ClearPendingPublish();
 				SetProgress("Done.", 1f);
 				Log($"Publish complete. url={_lastPublishedGameUrl}");
 			}

@@ -13,6 +13,7 @@ namespace Plysync.Editor
 		private const string PendingPublishGameIdKey = "Plysync.PendingPublish.GameId";
 		private const string PendingPublishVariationIdKey = "Plysync.PendingPublish.VariationId";
 		private const string PendingPublishRevisionKey = "Plysync.PendingPublish.Revision";
+		private const string PendingPublishForceContinueKey = "Plysync.PendingPublish.ForceContinue";
 
 		public static string LoadLog()
 		{
@@ -102,6 +103,21 @@ namespace Plysync.Editor
 			SessionState.EraseString(PendingPublishGameIdKey);
 			SessionState.EraseString(PendingPublishVariationIdKey);
 			SessionState.EraseString(PendingPublishRevisionKey);
+			SessionState.EraseBool(PendingPublishForceContinueKey);
+		}
+
+		public static void RequestPendingPublishForceContinue()
+		{
+			SessionState.SetBool(PendingPublishForceContinueKey, true);
+		}
+
+		public static bool ConsumePendingPublishForceContinue()
+		{
+			var value = SessionState.GetBool(PendingPublishForceContinueKey, false);
+			if (value)
+				SessionState.EraseBool(PendingPublishForceContinueKey);
+
+			return value;
 		}
 	}
 }
