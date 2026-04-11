@@ -856,7 +856,7 @@ namespace Plysync.Editor
 			if (ImportSessionState.TryLoadPendingImportPath(out _))
 			{
 				Log("Manual continue requested for the pending import.");
-				EditorApplication.delayCall += ResumePendingImport;
+				RestartWindowAndResume();
 				return;
 			}
 
@@ -864,8 +864,20 @@ namespace Plysync.Editor
 			{
 				Log("Manual continue requested for the pending publish.");
 				ImportSessionState.RequestPendingPublishForceContinue();
-				EditorApplication.delayCall += ResumePendingPublish;
+				RestartWindowAndResume();
 			}
+		}
+
+		private void RestartWindowAndResume()
+		{
+			var window = this;
+			EditorApplication.delayCall += () =>
+			{
+				if (window != null)
+					window.Close();
+
+				Open();
+			};
 		}
 
 		private bool TryResolveLatestLinkedSyncInfo(out SyncBuildInfo info)
