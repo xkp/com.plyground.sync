@@ -111,6 +111,11 @@ using UnityEngine.Networking;
 
 		private static Task<bool> InstallUnityPackages(string[] packages, Action<string> log, CancellationToken ct)
 		{
+				return InstallUnityPackagesAsync(packages, log, ct);
+			}
+
+			private static async Task<bool> InstallUnityPackagesAsync(string[] packages, Action<string> log, CancellationToken ct)
+			{
 				var changed = false;
 				foreach (var pkg in packages)
 				{
@@ -119,37 +124,109 @@ using UnityEngine.Networking;
 					if (!File.Exists(pkg))
 						throw new FileNotFoundException("Unity package file was not found.", pkg);
 
-				var identity = GetUnityPackageIdentity(pkg);
-				var fingerprint = GetUnityPackageFingerprint(pkg);
-				var installedKey = GetUnityPackageInstalledKey(identity);
-				var installedFingerprint = EditorPrefs.GetString(installedKey, "");
+					var identity = GetUnityPackageIdentity(pkg);
+					var fingerprint = GetUnityPackageFingerprint(pkg);
+					var installedKey = GetUnityPackageInstalledKey(identity);
+					var installedFingerprint = EditorPrefs.GetString(installedKey, "");
 
-				if (!string.IsNullOrWhiteSpace(fingerprint) &&
-					string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
-				{
-					log($".unitypackage already imported: {Path.GetFileName(pkg)}");
-					continue;
-				}
-
-				//if (string.IsNullOrWhiteSpace(pkg.downloadUrl))
-				//{
-				//	log($"Skipping .unitypackage '{identity}' (missing downloadUrl).");
-				//	continue;
-				//}
+					if (!string.IsNullOrWhiteSpace(fingerprint) &&
+						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+					{
+						log($".unitypackage already imported: {Path.GetFileName(pkg)}");
+						continue;
+					}
 
 					var localPath = pkg; // await ResolveUnityPackageFilePath(pkg, log, ct);
-					//VerifyUnityPackageHash(pkg, localPath, log);
-
 					log($"Importing .unitypackage: {Path.GetFileName(localPath)}");
-					AssetDatabase.ImportPackage(localPath, false);
-					AssetDatabase.Refresh();
+					await ImportUnityPackageAndWait(localPath, log, ct);
 					log($"Imported .unitypackage from: {localPath}");
 					if (!string.IsNullOrWhiteSpace(fingerprint))
 						EditorPrefs.SetString(installedKey, fingerprint);
 					changed = true;
 				}
 
-				return Task.FromResult(changed);
+				return changed;
+			}
+
+			private static async Task ImportUnityPackageAndWait(string localPath, Action<string> log, CancellationToken ct)
+			{
+				var packageFileName = Path.GetFileName(localPath);
+				var completion = new TaskCompletionSource<PackageImportResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+				var eventSeen = false;
+
+				void OnCompleted(string packageName)
+				{
+					eventSeen = true;
+					log($"Unity package import completed: {packageName}");
+					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Completed));
+				}
+
+				void OnFailed(string packageName, string error)
+				{
+					eventSeen = true;
+					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Failed, error));
+				}
+
+				void OnCancelled(string packageName)
+				{
+					eventSeen = true;
+					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Cancelled));
+				}
+
+				AssetDatabase.importPackageCompleted += OnCompleted;
+				AssetDatabase.importPackageFailed += OnFailed;
+				AssetDatabase.importPackageCancelled += OnCancelled;
+
+				try
+				{
+					AssetDatabase.ImportPackage(localPath, false);
+					log($"Waiting for Unity package import callbacks: {packageFileName}");
+
+					while (!completion.Task.IsCompleted)
+					{
+						ct.ThrowIfCancellationRequested();
+						await Task.Delay(100, ct);
+					}
+
+					var result = await completion.Task;
+					if (result.status == PackageImportStatus.Failed)
+						throw new Exception($"Unity package import failed for '{packageFileName}': {result.error ?? "Unknown error."}");
+
+					if (result.status == PackageImportStatus.Cancelled)
+						throw new OperationCanceledException($"Unity package import was cancelled for '{packageFileName}'.");
+
+					AssetDatabase.Refresh();
+				}
+				finally
+				{
+					AssetDatabase.importPackageCompleted -= OnCompleted;
+					AssetDatabase.importPackageFailed -= OnFailed;
+					AssetDatabase.importPackageCancelled -= OnCancelled;
+
+					if (!eventSeen)
+						log($"Unity package import callbacks were detached without an explicit completion event for: {packageFileName}");
+				}
+			}
+
+			private readonly struct PackageImportResult
+			{
+				public readonly string packageName;
+				public readonly PackageImportStatus status;
+				public readonly string error;
+
+				public PackageImportResult(string packageName, PackageImportStatus status, string error = null)
+				{
+					this.packageName = packageName;
+					this.status = status;
+					this.error = error;
+				}
+			}
+
+			private enum PackageImportStatus
+			{
+				Completed,
+				Failed,
+				Cancelled
 			}
 
 			private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
