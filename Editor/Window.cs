@@ -64,23 +64,28 @@ namespace Plysync.Editor
 		public static void ResumePendingImport()
 		{
 			var window = GetWindow<PlysyncWindow>("plyground");
-			EditorApplication.delayCall += () =>
-			{
-				if (window == null) return;
-				window.RefreshLinkedStateFromMarker();
-				_ = window.BootstrapLocalProject();
-				window.Repaint();
-			};
+			QueueBootstrapResume(window);
 		}
 
 		public static void ResumePendingPublish()
 		{
 			var window = GetWindow<PlysyncWindow>("plyground");
+			QueueBootstrapResume(window);
+		}
+
+		private static void QueueBootstrapResume(PlysyncWindow window)
+		{
 			EditorApplication.delayCall += () =>
 			{
 				if (window == null) return;
+				if (window._busy)
+				{
+					QueueBootstrapResume(window);
+					return;
+				}
+
 				window.RefreshLinkedStateFromMarker();
-				_ = window.ResumePendingPublishInternal();
+				_ = window.BootstrapLocalProject();
 				window.Repaint();
 			};
 		}
