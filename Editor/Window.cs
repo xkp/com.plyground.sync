@@ -205,8 +205,8 @@ namespace Plysync.Editor
 			using (new EditorGUILayout.HorizontalScope())
 			{
 				GUILayout.Label($"Status: {_status}", GUILayout.ExpandWidth(true));
-				var hasPendingResume = TryGetPendingResumeLabel(out var pendingResumeLabel);
-				GUI.enabled = !_busy && hasPendingResume;
+				var hasPendingResume = TryGetPendingResumeLabel(out _);
+				GUI.enabled = hasPendingResume;
 				if (GUILayout.Button("Continue", GUILayout.Width(110)))
 					TriggerPendingResume();
 				GUI.enabled = true;
@@ -842,17 +842,23 @@ namespace Plysync.Editor
 
 		private void TriggerPendingResume()
 		{
+			if (_busy)
+			{
+				Log("Manual continue requested while Unity was still marked busy. Cancelling the current wait and retrying resume.");
+				_cts?.Cancel();
+			}
+
 			if (ImportSessionState.TryLoadPendingImportPath(out _))
 			{
 				Log("Manual continue requested for the pending import.");
-				ResumePendingImport();
+				EditorApplication.delayCall += ResumePendingImport;
 				return;
 			}
 
 			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
 			{
 				Log("Manual continue requested for the pending publish.");
-				ResumePendingPublish();
+				EditorApplication.delayCall += ResumePendingPublish;
 			}
 		}
 
@@ -987,7 +993,6 @@ namespace Plysync.Editor
 				if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
 					throw new Exception("Unity did not finish switching to WebGL before the publish resume.");
 
-				ImportSessionState.ClearPendingPublish();
 				SetProgress("Building WebGL...", 0.12f);
 				var publisher = new Publisher(Log, SetProgress);
 				var buildPath = await publisher.BuildWebGL(variationId, revision, developmentBuild: false, token);
@@ -1006,6 +1011,7 @@ namespace Plysync.Editor
 
 				_lastPublishedGameUrl = publishedUrl;
 				_publishErrorMessage = null;
+				ImportSessionState.ClearPendingPublish();
 				SetProgress("Done.", 1f);
 				Log($"Publish complete. url={_lastPublishedGameUrl}");
 			}
