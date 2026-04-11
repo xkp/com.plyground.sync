@@ -18,6 +18,12 @@ namespace Plysync.Editor
 
 		private static void TryOpenOnStartup()
 		{
+			if (ImportSessionState.TryLoadPendingImportPath(out _))
+			{
+				PlysyncWindow.ResumePendingImport();
+				return;
+			}
+
 			if (SessionState.GetBool(SessionKey, false)) return;
 			SessionState.SetBool(SessionKey, true);
 

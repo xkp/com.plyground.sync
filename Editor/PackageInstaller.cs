@@ -14,21 +14,36 @@ using UnityEngine.Networking;
 
 	namespace Plysync.Editor
 	{
+		public enum PackageInstallOutcome
+		{
+			NoChanges,
+			ImportedPackageRequiresReload
+		}
+
+		[InitializeOnLoad]
 		public static class PackageInstaller
 		{
 			private const string InstalledUnityPackagePrefix = "Plysync.InstalledUnityPackage.";
 
-			public static async Task<bool> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
+			static PackageInstaller()
+			{
+				AssetDatabase.importPackageCompleted += OnImportPackageCompleted;
+				AssetDatabase.importPackageFailed += OnImportPackageFailed;
+				AssetDatabase.importPackageCancelled += OnImportPackageCancelled;
+			}
+
+			public static async Task<PackageInstallOutcome> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
 			{
 				if (pkgs == null)
 				{
 					log("No packages block provided.");
-					return false;
+					return PackageInstallOutcome.NoChanges;
 				}
 
 				SortInPlace(pkgs);
-				var changed = false;
 				log($"Package installer received {pkgs.value?.Length ?? 0} package path(s).");
+
+				FinalizePendingPackageImport(log);
 
 				//if (pkgs.upm != null && pkgs.upm.Length > 0)
 				//{
@@ -36,16 +51,15 @@ using UnityEngine.Networking;
 			//}
 				if (pkgs.value != null && pkgs.value.Length > 0)
 				{
-					changed |= await InstallUnityPackages(pkgs.value, log, ct);
+					var importedPackage = await InstallUnityPackages(pkgs.value, log, ct);
+					if (importedPackage)
+						return PackageInstallOutcome.ImportedPackageRequiresReload;
 				}
 
-				if (changed)
-				{
-					await RebuildTypes(log, ct);
-				}
+				await RebuildTypes(log, ct);
 
-				log(changed ? "Package install changed the project." : "Package install found no changes.");
-				return changed;
+				log("Package install found no changes.");
+				return PackageInstallOutcome.NoChanges;
 			}
 
 		private static void SortInPlace(PackagesBlock pkgs)
@@ -116,7 +130,6 @@ using UnityEngine.Networking;
 
 			private static async Task<bool> InstallUnityPackagesAsync(string[] packages, Action<string> log, CancellationToken ct)
 			{
-				var changed = false;
 				foreach (var pkg in packages)
 				{
 					ct.ThrowIfCancellationRequested();
@@ -138,95 +151,13 @@ using UnityEngine.Networking;
 
 					var localPath = pkg; // await ResolveUnityPackageFilePath(pkg, log, ct);
 					log($"Importing .unitypackage: {Path.GetFileName(localPath)}");
-					await ImportUnityPackageAndWait(localPath, log, ct);
-					log($"Imported .unitypackage from: {localPath}");
-					if (!string.IsNullOrWhiteSpace(fingerprint))
-						EditorPrefs.SetString(installedKey, fingerprint);
-					changed = true;
-				}
-
-				return changed;
-			}
-
-			private static async Task ImportUnityPackageAndWait(string localPath, Action<string> log, CancellationToken ct)
-			{
-				var packageFileName = Path.GetFileName(localPath);
-				var completion = new TaskCompletionSource<PackageImportResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-				var eventSeen = false;
-
-				void OnCompleted(string packageName)
-				{
-					eventSeen = true;
-					log($"Unity package import completed: {packageName}");
-					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Completed));
-				}
-
-				void OnFailed(string packageName, string error)
-				{
-					eventSeen = true;
-					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Failed, error));
-				}
-
-				void OnCancelled(string packageName)
-				{
-					eventSeen = true;
-					completion.TrySetResult(new PackageImportResult(packageName, PackageImportStatus.Cancelled));
-				}
-
-				AssetDatabase.importPackageCompleted += OnCompleted;
-				AssetDatabase.importPackageFailed += OnFailed;
-				AssetDatabase.importPackageCancelled += OnCancelled;
-
-				try
-				{
+					ImportSessionState.SavePendingPackageImport(localPath, fingerprint);
 					AssetDatabase.ImportPackage(localPath, false);
-					log($"Waiting for Unity package import callbacks: {packageFileName}");
-
-					while (!completion.Task.IsCompleted)
-					{
-						ct.ThrowIfCancellationRequested();
-						await Task.Delay(100, ct);
-					}
-
-					var result = await completion.Task;
-					if (result.status == PackageImportStatus.Failed)
-						throw new Exception($"Unity package import failed for '{packageFileName}': {result.error ?? "Unknown error."}");
-
-					if (result.status == PackageImportStatus.Cancelled)
-						throw new OperationCanceledException($"Unity package import was cancelled for '{packageFileName}'.");
-
-					AssetDatabase.Refresh();
+					log($"Queued .unitypackage import and recorded pending resume state: {localPath}");
+					return true;
 				}
-				finally
-				{
-					AssetDatabase.importPackageCompleted -= OnCompleted;
-					AssetDatabase.importPackageFailed -= OnFailed;
-					AssetDatabase.importPackageCancelled -= OnCancelled;
 
-					if (!eventSeen)
-						log($"Unity package import callbacks were detached without an explicit completion event for: {packageFileName}");
-				}
-			}
-
-			private readonly struct PackageImportResult
-			{
-				public readonly string packageName;
-				public readonly PackageImportStatus status;
-				public readonly string error;
-
-				public PackageImportResult(string packageName, PackageImportStatus status, string error = null)
-				{
-					this.packageName = packageName;
-					this.status = status;
-					this.error = error;
-				}
-			}
-
-			private enum PackageImportStatus
-			{
-				Completed,
-				Failed,
-				Cancelled
+				return false;
 			}
 
 			private static async Task RebuildTypes(Action<string> log, CancellationToken ct)
@@ -264,6 +195,41 @@ using UnityEngine.Networking;
 
 				await Task.Delay(100, ct);
 			}
+		}
+
+		private static void FinalizePendingPackageImport(Action<string> log)
+		{
+			if (!ImportSessionState.TryLoadPendingPackageImport(out var packagePath, out var fingerprint))
+				return;
+
+			if (!string.IsNullOrWhiteSpace(packagePath))
+			{
+				log?.Invoke($"Finalizing previously imported package after Unity reload: {Path.GetFileName(packagePath)}");
+				var installedKey = GetUnityPackageInstalledKey(GetUnityPackageIdentity(packagePath));
+				if (!string.IsNullOrWhiteSpace(fingerprint))
+					EditorPrefs.SetString(installedKey, fingerprint);
+			}
+
+			ImportSessionState.ClearPendingPackageImport();
+			AssetDatabase.Refresh();
+		}
+
+		private static void OnImportPackageCompleted(string packageName)
+		{
+			if (ImportSessionState.TryLoadPendingImportPath(out _))
+				EditorApplication.delayCall += PlysyncWindow.ResumePendingImport;
+		}
+
+		private static void OnImportPackageFailed(string packageName, string error)
+		{
+			ImportSessionState.ClearPendingPackageImport();
+			Debug.LogError($"Failed importing Unity package '{packageName}': {error}");
+		}
+
+		private static void OnImportPackageCancelled(string packageName)
+		{
+			ImportSessionState.ClearPendingPackageImport();
+			Debug.LogWarning($"Cancelled Unity package import: {packageName}");
 		}
 
 		private static bool TryResolveExistingLocalPath(string source, out string localPath)

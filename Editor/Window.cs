@@ -61,6 +61,18 @@ namespace Plysync.Editor
 		[MenuItem("Plyground/Sync")]
 		public static void Open() => GetWindow<PlysyncWindow>("plyground");
 
+		public static void ResumePendingImport()
+		{
+			var window = GetWindow<PlysyncWindow>("plyground");
+			EditorApplication.delayCall += () =>
+			{
+				if (window == null) return;
+				window.RefreshLinkedStateFromMarker();
+				_ = window.BootstrapLocalProject();
+				window.Repaint();
+			};
+		}
+
 		private void OnEnable()
 		{
 			_cache = new CacheStore();

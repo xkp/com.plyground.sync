@@ -8,6 +8,8 @@ namespace Plysync.Editor
 	{
 		private const string LogKey = "Plysync.LogBuffer";
 		private const string PendingImportPathKey = "Plysync.PendingImportPath";
+		private const string PendingPackagePathKey = "Plysync.PendingPackage.Path";
+		private const string PendingPackageFingerprintKey = "Plysync.PendingPackage.Fingerprint";
 
 		public static string LoadLog()
 		{
@@ -44,6 +46,31 @@ namespace Plysync.Editor
 		public static void ClearPendingImportPath()
 		{
 			SessionState.EraseString(PendingImportPathKey);
+		}
+
+		public static void SavePendingPackageImport(string packagePath, string fingerprint)
+		{
+			if (string.IsNullOrWhiteSpace(packagePath))
+			{
+				ClearPendingPackageImport();
+				return;
+			}
+
+			SessionState.SetString(PendingPackagePathKey, packagePath);
+			SessionState.SetString(PendingPackageFingerprintKey, fingerprint ?? "");
+		}
+
+		public static bool TryLoadPendingPackageImport(out string packagePath, out string fingerprint)
+		{
+			packagePath = SessionState.GetString(PendingPackagePathKey, "");
+			fingerprint = SessionState.GetString(PendingPackageFingerprintKey, "");
+			return !string.IsNullOrWhiteSpace(packagePath);
+		}
+
+		public static void ClearPendingPackageImport()
+		{
+			SessionState.EraseString(PendingPackagePathKey);
+			SessionState.EraseString(PendingPackageFingerprintKey);
 		}
 	}
 }
