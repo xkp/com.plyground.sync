@@ -55,15 +55,8 @@ namespace Plysync.Editor
 				Directory.Delete(buildDir, recursive: true);
 			Directory.CreateDirectory(buildDir);
 
-			// Switch target to WebGL
-			_progress("Switching build target to WebGL...", 0.40f);
 			if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
-			{
-				var ok = EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.WebGL, BuildTarget.WebGL);
-				if (!ok) throw new Exception("Failed to switch build target to WebGL.");
-			}
-
-			await WaitForEditorToSettle(ct, "after switching build target");
+				throw new Exception("WebGL must already be the active build target before starting the build.");
 
 			// Configure options
 			var opts = new BuildPlayerOptions

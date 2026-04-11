@@ -10,6 +10,9 @@ namespace Plysync.Editor
 		private const string PendingImportPathKey = "Plysync.PendingImportPath";
 		private const string PendingPackagePathKey = "Plysync.PendingPackage.Path";
 		private const string PendingPackageFingerprintKey = "Plysync.PendingPackage.Fingerprint";
+		private const string PendingPublishGameIdKey = "Plysync.PendingPublish.GameId";
+		private const string PendingPublishVariationIdKey = "Plysync.PendingPublish.VariationId";
+		private const string PendingPublishRevisionKey = "Plysync.PendingPublish.Revision";
 
 		public static string LoadLog()
 		{
@@ -71,6 +74,34 @@ namespace Plysync.Editor
 		{
 			SessionState.EraseString(PendingPackagePathKey);
 			SessionState.EraseString(PendingPackageFingerprintKey);
+		}
+
+		public static void SavePendingPublish(string gameId, string variationId, string revision)
+		{
+			if (string.IsNullOrWhiteSpace(gameId))
+			{
+				ClearPendingPublish();
+				return;
+			}
+
+			SessionState.SetString(PendingPublishGameIdKey, gameId);
+			SessionState.SetString(PendingPublishVariationIdKey, variationId ?? "");
+			SessionState.SetString(PendingPublishRevisionKey, revision ?? "");
+		}
+
+		public static bool TryLoadPendingPublish(out string gameId, out string variationId, out string revision)
+		{
+			gameId = SessionState.GetString(PendingPublishGameIdKey, "");
+			variationId = SessionState.GetString(PendingPublishVariationIdKey, "");
+			revision = SessionState.GetString(PendingPublishRevisionKey, "");
+			return !string.IsNullOrWhiteSpace(gameId);
+		}
+
+		public static void ClearPendingPublish()
+		{
+			SessionState.EraseString(PendingPublishGameIdKey);
+			SessionState.EraseString(PendingPublishVariationIdKey);
+			SessionState.EraseString(PendingPublishRevisionKey);
 		}
 	}
 }

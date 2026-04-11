@@ -24,6 +24,12 @@ namespace Plysync.Editor
 				return;
 			}
 
+			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
+			{
+				PlysyncWindow.ResumePendingPublish();
+				return;
+			}
+
 			if (SessionState.GetBool(SessionKey, false)) return;
 			SessionState.SetBool(SessionKey, true);
 

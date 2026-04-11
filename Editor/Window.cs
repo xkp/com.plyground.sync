@@ -73,6 +73,18 @@ namespace Plysync.Editor
 			};
 		}
 
+		public static void ResumePendingPublish()
+		{
+			var window = GetWindow<PlysyncWindow>("plyground");
+			EditorApplication.delayCall += () =>
+			{
+				if (window == null) return;
+				window.RefreshLinkedStateFromMarker();
+				_ = window.ResumePendingPublishInternal();
+				window.Repaint();
+			};
+		}
+
 		private void OnEnable()
 		{
 			_cache = new CacheStore();
@@ -488,6 +500,12 @@ namespace Plysync.Editor
 				ImportSessionState.ClearPendingImportPath();
 			}
 
+			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
+			{
+				await ResumePendingPublishInternal();
+				return;
+			}
+
 			await DiscoverTargets();
 
 			if (!string.IsNullOrWhiteSpace(_linkedGameId))
@@ -679,6 +697,22 @@ namespace Plysync.Editor
 				if (string.IsNullOrWhiteSpace(variationId))
 					throw new Exception("Variation ID was not found for this project.");
 
+				if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
+				{
+					ImportSessionState.SavePendingPublish(_linkedGameId, variationId, revision);
+					Log("Publish paused while Unity switches the build target to WebGL. The publish will resume automatically.");
+					SetProgress("Switching build target to WebGL...", 0.12f);
+					var ok = EditorUserBuildSettings.SwitchActiveBuildTarget(BuildTargetGroup.WebGL, BuildTarget.WebGL);
+					if (!ok)
+					{
+						ImportSessionState.ClearPendingPublish();
+						throw new Exception("Failed to switch build target to WebGL.");
+					}
+
+					EditorApplication.delayCall += ResumePendingPublish;
+					return;
+				}
+
 				SetProgress("Building WebGL...", 0.12f);
 				var publisher = new Publisher(Log, SetProgress);
 				var buildPath = await publisher.BuildWebGL(variationId, revision, developmentBuild: false, token);
@@ -865,6 +899,73 @@ namespace Plysync.Editor
 			{
 				Log("Resource collection failed: " + e);
 				_resourceSummary = "Resource collection failed.\n" + e.Message;
+			}
+			finally
+			{
+				EndBusy();
+				Repaint();
+			}
+		}
+
+		private async Task ResumePendingPublishInternal()
+		{
+			if (_busy) return;
+			if (!ImportSessionState.TryLoadPendingPublish(out var pendingGameId, out var pendingVariationId, out var pendingRevision))
+				return;
+
+			_cts = new CancellationTokenSource();
+			var token = _cts.Token;
+
+			try
+			{
+				BeginBusy($"Resume Publish: {pendingGameId}");
+				_publishErrorMessage = null;
+				_linkedGameId = pendingGameId;
+				RefreshLinkedStateFromMarker();
+
+				var variationId = !string.IsNullOrWhiteSpace(pendingVariationId)
+					? pendingVariationId
+					: ResolveVariationId(_linkedSyncInfo ?? _cache.LoadSyncInfo(pendingGameId));
+				if (string.IsNullOrWhiteSpace(variationId))
+					throw new Exception("Variation ID was not found for the resumed publish.");
+
+				var revision = !string.IsNullOrWhiteSpace(pendingRevision)
+					? pendingRevision
+					: ResolveRevisionFromSyncInfo(_linkedSyncInfo ?? _cache.LoadSyncInfo(pendingGameId)) ?? "unknown";
+
+				if (EditorUserBuildSettings.activeBuildTarget != BuildTarget.WebGL)
+					throw new Exception("Unity did not finish switching to WebGL before the publish resume.");
+
+				ImportSessionState.ClearPendingPublish();
+				SetProgress("Building WebGL...", 0.12f);
+				var publisher = new Publisher(Log, SetProgress);
+				var buildPath = await publisher.BuildWebGL(variationId, revision, developmentBuild: false, token);
+				Log($"WebGL build ready: {buildPath}");
+
+				SetProgress("Publishing via Plyground app...", 0.85f);
+				_lastPublishedGameUrl = "";
+				var localPublish = new LocalPublishClient(_localPublishServerBaseUrl, Log);
+				var response = await localPublish.Publish(variationId, token);
+				var publishedUrl = !string.IsNullOrWhiteSpace(response.gameUrl) ? response.gameUrl : response.url;
+				if (!response.success && string.IsNullOrWhiteSpace(publishedUrl))
+				{
+					var errorText = !string.IsNullOrWhiteSpace(response.error) ? response.error : response.message;
+					throw new Exception(string.IsNullOrWhiteSpace(errorText) ? "Local publish reported failure." : errorText);
+				}
+
+				_lastPublishedGameUrl = publishedUrl;
+				_publishErrorMessage = null;
+				SetProgress("Done.", 1f);
+				Log($"Publish complete. url={_lastPublishedGameUrl}");
+			}
+			catch (OperationCanceledException)
+			{
+				Log("Publish cancelled.");
+			}
+			catch (Exception e)
+			{
+				Log("Publish failed: " + e);
+				NotifyPublishFailure(e.Message);
 			}
 			finally
 			{
