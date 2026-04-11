@@ -858,6 +858,7 @@ namespace Plysync.Editor
 			if (ImportSessionState.TryLoadPendingPublish(out _, out _, out _))
 			{
 				Log("Manual continue requested for the pending publish.");
+				ImportSessionState.RequestPendingPublishForceContinue();
 				EditorApplication.delayCall += ResumePendingPublish;
 			}
 		}

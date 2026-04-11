@@ -89,6 +89,12 @@ namespace Plysync.Editor
 			while (EditorApplication.isUpdating || EditorApplication.isCompiling)
 			{
 				ct.ThrowIfCancellationRequested();
+				if (ImportSessionState.ConsumePendingPublishForceContinue())
+				{
+					_log("Manual continue override received. Proceeding even though Unity still reports asset updates/script compilation.");
+					return;
+				}
+
 				if (!loggedWait)
 				{
 					_log($"Waiting for Unity to finish asset updates/script compilation {reason}...");
