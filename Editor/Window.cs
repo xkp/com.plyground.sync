@@ -37,9 +37,6 @@ namespace Plysync.Editor
 		private string _publishErrorMessage;
 		private string _resourceSummary;
 		private Vector2 _resourceSummaryScroll;
-		private bool _showLogs;
-		private bool _showResourceInfo;
-
 		private bool _busy;
 		private float _progress;
 		private string _step = "";
@@ -182,7 +179,9 @@ namespace Plysync.Editor
 			}
 
 			EditorGUILayout.Space(10);
-			DrawLogs();
+			DrawOptionsFoldout();
+			EditorGUILayout.Space(8);
+			DrawAdvancedFoldout();
 			EditorGUILayout.Space(8);
 			DrawBottomBar();
 		}
@@ -206,13 +205,6 @@ namespace Plysync.Editor
 			using (new EditorGUILayout.HorizontalScope())
 			{
 				GUILayout.Label($"Status: {_status}", GUILayout.ExpandWidth(true));
-				GUI.enabled = !_busy;
-				if (GUILayout.Button("Clear Logs", GUILayout.Width(110)))
-				{
-					_log.Clear();
-					ImportSessionState.ClearLog();
-				}
-				GUI.enabled = true;
 			}
 		}
 
@@ -405,8 +397,6 @@ namespace Plysync.Editor
 			EditorGUILayout.LabelField("Publish (WebGL)", EditorStyles.boldLabel);
 			EditorGUILayout.HelpBox("Publish sends this project's variation ID to the local Plyground app. The Plyground app only needs to be running when you click Publish.", MessageType.Info);
 
-			DrawOptionsFoldout();
-
 			if (string.IsNullOrWhiteSpace(_linkedSyncInfo?.variationId))
 				EditorGUILayout.HelpBox("Variation ID will be resolved when you click Publish. If it cannot be found then, publish will show an error.", MessageType.Info);
 
@@ -418,16 +408,6 @@ namespace Plysync.Editor
 				_ = PublishLinkedGame();
 			GUI.enabled = true;
 
-			EditorGUILayout.Space(10);
-			EditorGUILayout.LabelField("Build Resources", EditorStyles.boldLabel);
-			EditorGUILayout.HelpBox("Collect Resource Info shows both the broader Build Settings dependency summary and the stricter currently loaded scene reference summary.", MessageType.None);
-			GUI.enabled = !_busy;
-			if (GUILayout.Button("Collect Resource Info", GUILayout.Height(28)))
-				_ = CollectResourceInfo();
-			GUI.enabled = true;
-
-			DrawResourceInfoSection();
-
 			if (!string.IsNullOrWhiteSpace(_lastPublishedGameUrl))
 			{
 				GUI.enabled = !_busy;
@@ -435,9 +415,6 @@ namespace Plysync.Editor
 					Application.OpenURL(_lastPublishedGameUrl);
 				GUI.enabled = true;
 			}
-
-			EditorGUILayout.Space(8);
-			DrawAdvancedFoldout();
 		}
 
 		private void DrawAdvancedFoldout()
@@ -446,6 +423,8 @@ namespace Plysync.Editor
 			if (!_showAdvanced) return;
 
 			EditorGUI.indentLevel++;
+			DrawLogsSection();
+			EditorGUILayout.Space(8);
 			_localPublishServerBaseUrl = EditorGUILayout.TextField("Plyground Local Server", _localPublishServerBaseUrl);
 
 			using (new EditorGUILayout.HorizontalScope())
@@ -462,6 +441,8 @@ namespace Plysync.Editor
 					Log("Advanced settings saved.");
 				}
 			}
+			EditorGUILayout.Space(10);
+			DrawBuildResourcesSection();
 			EditorGUI.indentLevel--;
 		}
 
@@ -475,23 +456,33 @@ namespace Plysync.Editor
 			EditorGUI.indentLevel--;
 		}
 
-		private void DrawLogs()
+		private void DrawLogsSection()
 		{
-			_showLogs = EditorGUILayout.Foldout(_showLogs, "Logs", true);
-			if (!_showLogs) return;
-
+			EditorGUILayout.LabelField("Logs", EditorStyles.boldLabel);
 			_scroll = EditorGUILayout.BeginScrollView(_scroll, GUILayout.Height(220));
 			EditorGUILayout.TextArea(_log.ToString(), GUILayout.ExpandHeight(true));
 			EditorGUILayout.EndScrollView();
+			EditorGUILayout.Space(4);
+			GUI.enabled = !_busy;
+			if (GUILayout.Button("Clear Logs", GUILayout.Width(110)))
+			{
+				_log.Clear();
+				ImportSessionState.ClearLog();
+			}
+			GUI.enabled = true;
 		}
 
-		private void DrawResourceInfoSection()
+		private void DrawBuildResourcesSection()
 		{
+			EditorGUILayout.LabelField("Build Resources", EditorStyles.boldLabel);
+			EditorGUILayout.HelpBox("Collect Resource Info shows both the broader Build Settings dependency summary and the stricter currently loaded scene reference summary.", MessageType.None);
+			GUI.enabled = !_busy;
+			if (GUILayout.Button("Collect Resource Info", GUILayout.Height(28)))
+				_ = CollectResourceInfo();
+			GUI.enabled = true;
+
 			if (string.IsNullOrWhiteSpace(_resourceSummary))
 				return;
-
-			_showResourceInfo = EditorGUILayout.Foldout(_showResourceInfo, "Resource Info", true);
-			if (!_showResourceInfo) return;
 
 			EditorGUILayout.Space(4);
 			_resourceSummaryScroll = EditorGUILayout.BeginScrollView(_resourceSummaryScroll, GUILayout.Height(180));
