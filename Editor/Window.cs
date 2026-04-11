@@ -969,7 +969,7 @@ namespace Plysync.Editor
 				_lastPublishedGameUrl = "";
 				var localPublish = new LocalPublishClient(_localPublishServerBaseUrl, Log);
 				var response = await localPublish.Publish(variationId, token);
-				var publishedUrl = !string.IsNullOrWhiteSpace(response.gameUrl) ? response.gameUrl : response.url;
+				var publishedUrl = !string.IsNullOrWhiteSpace(response.liveUrl) ? response.liveUrl : response.url;
 				if (!response.success && string.IsNullOrWhiteSpace(publishedUrl))
 				{
 					var errorText = !string.IsNullOrWhiteSpace(response.error) ? response.error : response.message;

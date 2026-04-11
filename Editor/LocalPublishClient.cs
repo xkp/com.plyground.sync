@@ -18,7 +18,7 @@ namespace Plysync.Editor
 	{
 		public bool success;
 		public string url;
-		public string gameUrl;
+		public string liveUrl;
 		public string message;
 		public string error;
 	}
