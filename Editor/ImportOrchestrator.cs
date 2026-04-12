@@ -145,7 +145,7 @@ using UnityEngine;
 				info.buildFilePath,
 				info.modulePath,
 				info.assetPath,
-				_defaultPostProcess
+				_defaultPostProcess.ToList()
 			);
 			_log("Game items import finished.");
 
