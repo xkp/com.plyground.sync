@@ -123,6 +123,7 @@ using UnityEngine;
 			OpenMainScene(_log);
 
 			// Environment import (ThreedeeLoader)
+			_defaultPostProcess.Clear();
 			_progress("Importing environment (ThreedeeLoader)...", 0.55f);
 			string outputFolder = Application.dataPath;
 			_log("Starting environment import...");
@@ -139,14 +140,12 @@ using UnityEngine;
 			// Game items import (BigGameLoader)
 			_progress("Importing game items (BigGameLoader)...", 0.72f);
 			_log("Starting game items import via PlygroundLoader.Load...");
-
-			var preprocess = new List<PostProcessNode>(); // keep empty for now, wire UI later if needed
 			await PlygroundLoader.Load(
 				info.gameItemPath,
 				info.buildFilePath,
 				info.modulePath,
 				info.assetPath,
-				preprocess
+				_defaultPostProcess
 			);
 			_log("Game items import finished.");
 
