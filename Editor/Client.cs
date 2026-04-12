@@ -35,14 +35,8 @@ namespace Plysync.Editor
 				return null;
 			}
 
-			foreach (var rawModuleId in moduleIds)
+			foreach (var moduleId in EnumerateDistinctModuleIds(moduleIds, ct))
 			{
-				ct.ThrowIfCancellationRequested();
-
-				var moduleId = (rawModuleId ?? "").Trim();
-				if (string.IsNullOrWhiteSpace(moduleId))
-					continue;
-
 				var moduleFolder = Path.Combine(modulesRoot, moduleId);
 				if (!Directory.Exists(moduleFolder))
 				{
@@ -157,14 +151,8 @@ namespace Plysync.Editor
 
 		private IEnumerable<ModuleBgm> EnumerateModuleBgms(string[] moduleIds, string modulesRoot, CancellationToken ct)
 		{
-			foreach (var rawModuleId in moduleIds)
+			foreach (var moduleId in EnumerateDistinctModuleIds(moduleIds, ct))
 			{
-				ct.ThrowIfCancellationRequested();
-
-				var moduleId = (rawModuleId ?? "").Trim();
-				if (string.IsNullOrWhiteSpace(moduleId))
-					continue;
-
 				var moduleFolder = Path.Combine(modulesRoot, moduleId);
 				if (!Directory.Exists(moduleFolder))
 				{
@@ -192,6 +180,23 @@ namespace Plysync.Editor
 				}
 
 				yield return bgm;
+			}
+		}
+
+		private IEnumerable<string> EnumerateDistinctModuleIds(IEnumerable<string> moduleIds, CancellationToken ct)
+		{
+			var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+			foreach (var rawModuleId in moduleIds ?? Array.Empty<string>())
+			{
+				ct.ThrowIfCancellationRequested();
+
+				var moduleId = (rawModuleId ?? "").Trim();
+				if (string.IsNullOrWhiteSpace(moduleId))
+					continue;
+
+				if (seen.Add(moduleId))
+					yield return moduleId;
 			}
 		}
 

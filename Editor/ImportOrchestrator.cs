@@ -254,6 +254,7 @@ using UnityEngine;
 
 			var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+			AddRange(ids, buildJson.coreModules);
 			AddRange(ids, new string[] { buildJson.selectedGame });
 			AddRange(ids, buildJson.selectedCharacters);
 			AddRange(ids, buildJson.selectedNature);

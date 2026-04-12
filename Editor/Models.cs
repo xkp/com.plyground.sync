@@ -64,6 +64,7 @@ namespace Plysync.Editor
 		public PackagesBlock packages;
 
 		// Module selections (used to resolve packages from the local Plyground service)
+		public string[] coreModules;
 		public string selectedGame;
 		public string[] selectedCharacters;
 		public string[] selectedNature;
