@@ -1,12 +1,14 @@
 ﻿#if UNITY_EDITOR
 using Plyground.Editor;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 
 namespace Plysync.Editor
@@ -459,10 +461,10 @@ namespace Plysync.Editor
 		private void DrawDebugUtilitiesSection()
 		{
 			EditorGUILayout.LabelField("Debug Utilities", EditorStyles.boldLabel);
-			EditorGUILayout.HelpBox("Force a full import of the currently linked project and ignore the cached revision check. This is useful for debugging module imports.", MessageType.Warning);
+			EditorGUILayout.HelpBox("Re-run the current project's game item import with the full loader path. This is useful for debugging module imports.", MessageType.Warning);
 
 			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedGameId);
-			if (GUILayout.Button("Re-import Current Project as New", GUILayout.Height(28)))
+			if (GUILayout.Button("Re-run Plyground Importer", GUILayout.Height(28)))
 				_ = ForceReimportLinkedGame();
 			GUI.enabled = true;
 		}
@@ -593,7 +595,7 @@ namespace Plysync.Editor
 			await RunImport(info, "Import");
 		}
 
-		private async Task RunImport(SyncBuildInfo info, string actionLabel, bool forceFullImport = false)
+		private async Task RunImport(SyncBuildInfo info, string actionLabel)
 		{
 			_cts = new CancellationTokenSource();
 			var token = _cts.Token;
@@ -603,7 +605,7 @@ namespace Plysync.Editor
 				BeginBusy($"{actionLabel}: {info.path}");
 
 				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-				var result = await orchestrator.Run(info, token, forceFullImport);
+				var result = await orchestrator.Run(info, token);
 				if (result == ImportRunResult.DeferredForReload)
 				{
 					_status = "Waiting for reload";
@@ -698,10 +700,48 @@ namespace Plysync.Editor
 				return;
 			}
 
-			_cache.SaveSyncInfo(latest);
-			_linkedSyncInfo = latest;
-			EnsureVariationId(_linkedSyncInfo);
-			await RunImport(latest, "Force Re-import", forceFullImport: true);
+			_cts = new CancellationTokenSource();
+			var token = _cts.Token;
+
+			try
+			{
+				BeginBusy($"Re-run Importer: {latest.path}");
+				_linkedSyncInfo = latest;
+				EnsureVariationId(_linkedSyncInfo);
+
+				SetProgress("Running Plyground importer...", 0.55f);
+				Log("Starting game items import via PlygroundLoader.Load...");
+				await PlygroundLoader.Load(
+					latest.gameItemPath,
+					latest.buildFilePath,
+					latest.modulePath,
+					latest.assetPath,
+					new List<PostProcessNode>()
+				);
+				Log("Game items import finished.");
+
+				AssetDatabase.SaveAssets();
+				EditorSceneManager.SaveOpenScenes();
+				_cache.SaveSyncInfo(latest);
+				RefreshLinkedStateFromMarker();
+				_linkedSyncInfo = _cache.LoadSyncInfo(latest.path) ?? latest;
+				_status = "Imported";
+				SetProgress("Done.", 1f);
+			}
+			catch (OperationCanceledException)
+			{
+				Log("Importer rerun cancelled.");
+			}
+			catch (Exception e)
+			{
+				Log("Importer rerun failed: " + e);
+				_status = "Import failed";
+			}
+			finally
+			{
+				EndBusy();
+				Repaint();
+			}
 		}
 
 		private async Task PublishLinkedGame()

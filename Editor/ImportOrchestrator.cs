@@ -36,7 +36,7 @@ using UnityEngine;
 			_progress = progress ?? ((_, __) => { });
 		}
 
-		public async Task<ImportRunResult> Run(SyncBuildInfo info, CancellationToken ct, bool forceFullImport = false)
+		public async Task<ImportRunResult> Run(SyncBuildInfo info, CancellationToken ct)
 		{
 			if (info == null) throw new Exception("SyncBuildInfo is null");
 			if (string.IsNullOrWhiteSpace(info.path)) throw new Exception("info.path is required");
@@ -111,16 +111,13 @@ using UnityEngine;
 
 			// Revision-based cache short-circuit (only if we actually have a revision)
 			var cached = _cache.Read(gameId);
-			if (!forceFullImport && cached != null && revision != "unknown" && cached.lastImportedRevision == revision)
+			if (cached != null && revision != "unknown" && cached.lastImportedRevision == revision)
 			{
 				_log($"No changes. revision={revision}");
 				// still ensure marker has the latest paths
 				//UpsertSceneMarker(gameId, revision, info);
 				return ImportRunResult.Completed;
 			}
-
-			if (forceFullImport)
-				_log("Force re-import requested. Skipping revision cache short-circuit.");
 
 			_progress("Opening MainScene...", 0.30f);
 			OpenMainScene(_log);
