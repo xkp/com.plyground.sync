@@ -433,6 +433,8 @@ namespace Plysync.Editor
 			EditorGUI.indentLevel++;
 			DrawLogsSection();
 			EditorGUILayout.Space(8);
+			DrawDebugUtilitiesSection();
+			EditorGUILayout.Space(8);
 			_localPublishServerBaseUrl = EditorGUILayout.TextField("Plyground Local Server", _localPublishServerBaseUrl);
 
 			using (new EditorGUILayout.HorizontalScope())
@@ -452,6 +454,17 @@ namespace Plysync.Editor
 			EditorGUILayout.Space(10);
 			DrawBuildResourcesSection();
 			EditorGUI.indentLevel--;
+		}
+
+		private void DrawDebugUtilitiesSection()
+		{
+			EditorGUILayout.LabelField("Debug Utilities", EditorStyles.boldLabel);
+			EditorGUILayout.HelpBox("Force a full import of the currently linked project and ignore the cached revision check. This is useful for debugging module imports.", MessageType.Warning);
+
+			GUI.enabled = !_busy && !string.IsNullOrWhiteSpace(_linkedGameId);
+			if (GUILayout.Button("Re-import Current Project as New", GUILayout.Height(28)))
+				_ = ForceReimportLinkedGame();
+			GUI.enabled = true;
 		}
 
 		private void DrawOptionsFoldout()
@@ -580,7 +593,7 @@ namespace Plysync.Editor
 			await RunImport(info, "Import");
 		}
 
-		private async Task RunImport(SyncBuildInfo info, string actionLabel)
+		private async Task RunImport(SyncBuildInfo info, string actionLabel, bool forceFullImport = false)
 		{
 			_cts = new CancellationTokenSource();
 			var token = _cts.Token;
@@ -590,7 +603,7 @@ namespace Plysync.Editor
 				BeginBusy($"{actionLabel}: {info.path}");
 
 				var orchestrator = new ImportOrchestrator(null, _cache, Log, SetProgress);
-				var result = await orchestrator.Run(info, token);
+				var result = await orchestrator.Run(info, token, forceFullImport);
 				if (result == ImportRunResult.DeferredForReload)
 				{
 					_status = "Waiting for reload";
@@ -673,6 +686,22 @@ namespace Plysync.Editor
 				EndBusy();
 				Repaint();
 			}
+		}
+
+		private async Task ForceReimportLinkedGame()
+		{
+			if (_busy) return;
+
+			if (!TryResolveLatestLinkedSyncInfo(out var latest))
+			{
+				Log("Current linked project files were not found on disk.");
+				return;
+			}
+
+			_cache.SaveSyncInfo(latest);
+			_linkedSyncInfo = latest;
+			EnsureVariationId(_linkedSyncInfo);
+			await RunImport(latest, "Force Re-import", forceFullImport: true);
 		}
 
 		private async Task PublishLinkedGame()
