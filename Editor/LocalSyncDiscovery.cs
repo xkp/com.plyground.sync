@@ -302,7 +302,7 @@ namespace Plysync.Editor
 			if (!Directory.Exists(jobsVariationDir))
 			{
 				log?.Invoke($"Jobs variation folder not found: {jobsVariationDir}");
-				return null;
+				return FindEnvironmentPathInBob(root, seed, log);
 			}
 
 			if (!string.IsNullOrWhiteSpace(seed))
@@ -363,7 +363,79 @@ namespace Plysync.Editor
 				return null;
 			}
 
-			log?.Invoke($"No environment folder containing threedee_scene.json was found under '{jobsVariationDir}'.");
+			log?.Invoke($"No environment folder containing threedee_scene.json was found under '{jobsVariationDir}'. Trying variation .bob.");
+			return FindEnvironmentPathInBob(root, seed, log);
+		}
+
+		private static string FindEnvironmentPathInBob(string root, string seed, Action<string> log)
+		{
+			if (string.IsNullOrWhiteSpace(root))
+				return null;
+
+			var bobDir = Path.Combine(root, ".bob");
+			if (!Directory.Exists(bobDir))
+			{
+				log?.Invoke($"Variation .bob folder not found: {bobDir}");
+				return null;
+			}
+
+			var directSceneFile = Path.Combine(bobDir, "threedee_scene.json");
+			if (File.Exists(directSceneFile))
+				return bobDir;
+
+			if (!string.IsNullOrWhiteSpace(seed))
+			{
+				try
+				{
+					var seededFolders = Directory
+						.GetDirectories(bobDir, seed + "*", SearchOption.TopDirectoryOnly)
+						.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+						.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+						.ToArray();
+
+					if (seededFolders.Length == 1)
+						return seededFolders[0];
+
+					if (seededFolders.Length > 1)
+					{
+						log?.Invoke($"Variation .bob seed fallback found multiple folders with threedee_scene.json under '{bobDir}'.");
+						return null;
+					}
+				}
+				catch (Exception ex)
+				{
+					log?.Invoke($"Failed scanning seeded environment folders in '{bobDir}': {ex.Message}");
+					return null;
+				}
+			}
+
+			try
+			{
+				var matchingFolders = Directory
+					.GetDirectories(bobDir, "*", SearchOption.TopDirectoryOnly)
+					.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+					.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+
+				if (matchingFolders.Length == 1)
+				{
+					log?.Invoke($"Using variation .bob fallback environment folder: {matchingFolders[0]}");
+					return matchingFolders[0];
+				}
+
+				if (matchingFolders.Length > 1)
+				{
+					log?.Invoke($"Variation .bob fallback found multiple folders with threedee_scene.json under '{bobDir}'.");
+					return null;
+				}
+			}
+			catch (Exception ex)
+			{
+				log?.Invoke($"Failed scanning variation .bob fallback environment folders in '{bobDir}': {ex.Message}");
+				return null;
+			}
+
+			log?.Invoke($"No environment artifact containing threedee_scene.json was found under '{bobDir}'.");
 			return null;
 		}
 
