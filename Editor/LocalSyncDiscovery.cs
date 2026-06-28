@@ -58,13 +58,6 @@ namespace Plysync.Editor
 			public string sceneFile;
 		}
 
-		[Serializable]
-		private sealed class BuildDescriptor
-		{
-			public string projectName;
-			public string selectedGame;
-		}
-
 		public static SyncBuildInfo[] Discover(Action<string> log)
 		{
 			log ??= _ => { };
@@ -234,21 +227,20 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			var buildFilePath = Path.Combine(root, "build.json");
-			if (!File.Exists(buildFilePath))
+			if (!TryResolveVariationFiles(
+				root,
+				variationId,
+				log,
+				out var descriptor,
+				out var descriptorFilePath,
+				out var gameItemPath,
+				out var buildFilePath))
 			{
-				log($"Project variation root '{root}' is missing build.json.");
 				return false;
 			}
 
-			if (!TryReadBuildDescriptor(buildFilePath, out var buildDescriptor, log) || buildDescriptor == null)
-			{
-				log($"Project variation build.json '{buildFilePath}' could not be parsed.");
-				return false;
-			}
-
-			if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(buildDescriptor.projectName))
-				name = buildDescriptor.projectName.Trim();
+			if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(descriptor?.name))
+				name = descriptor.name.Trim();
 
 			if (string.IsNullOrWhiteSpace(name))
 			{
@@ -256,20 +248,10 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			if (string.IsNullOrWhiteSpace(buildDescriptor.selectedGame))
-			{
-				log($"Project variation build.json '{buildFilePath}' is missing selectedGame.");
-				return false;
-			}
+			log($"Project .plyground resolved variation descriptor '{descriptorFilePath}'.");
+			log($"Project .plyground resolved game payload '{gameItemPath}'.");
 
-			var gameItemPath = FindGameFile(root, buildDescriptor.selectedGame);
-			if (string.IsNullOrWhiteSpace(gameItemPath))
-			{
-				log($"Project variation root '{root}' is missing the selectedGame payload '{buildDescriptor.selectedGame}'.");
-				return false;
-			}
-
-			var environmentPath = ResolveEnvironmentPathFromProjectFile(projectFilePath, projectFile, log);
+			var environmentPath = ResolveEnvironmentPathFromProjectFile(projectFilePath, projectFile, descriptor?.seed, log);
 			if (string.IsNullOrWhiteSpace(environmentPath))
 			{
 				log("Project .plyground did not provide a usable bob scene path.");
@@ -310,41 +292,21 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			var variationFilePath = FindVariationDescriptorFile(root, folderName);
-			if (string.IsNullOrWhiteSpace(variationFilePath))
+			if (!TryResolveVariationFiles(
+				root,
+				folderName,
+				log,
+				out var descriptor,
+				out _,
+				out var gameItemPath,
+				out var buildFilePath))
 			{
-				log($"Skipping '{root}': could not find variation descriptor file named '{folderName}' or '{folderName}.json'.");
-				return false;
-			}
-
-			if (!TryReadVariationDescriptor(variationFilePath, out var descriptor, log))
-			{
-				log($"Skipping '{root}': failed to parse variation descriptor '{variationFilePath}'.");
-				return false;
-			}
-
-			if (descriptor == null)
-			{
-				log($"Skipping '{root}': descriptor is null.");
 				return false;
 			}
 
 			if (string.IsNullOrWhiteSpace(descriptor.name))
 			{
 				log($"Skipping '{root}': descriptor is missing 'name'.");
-				return false;
-			}
-
-			if (string.IsNullOrWhiteSpace(descriptor.gameFileId))
-			{
-				log($"Skipping '{root}': descriptor is missing 'gameFileId'.");
-				return false;
-			}
-
-			var gameItemPath = FindGameFile(root, descriptor.gameFileId);
-			if (string.IsNullOrWhiteSpace(gameItemPath))
-			{
-				log($"Skipping '{root}': could not find game file for gameFileId '{descriptor.gameFileId}'.");
 				return false;
 			}
 
@@ -363,12 +325,6 @@ namespace Plysync.Editor
 			}
 
 			var assetPath = FindAssetPath(root);
-			var buildFilePath = Path.Combine(root, "build.json");
-			if (!File.Exists(buildFilePath))
-			{
-				log($"Skipping '{root}': build.json was not found.");
-				return false;
-			}
 
 			info = new SyncBuildInfo
 			{
@@ -381,6 +337,65 @@ namespace Plysync.Editor
 				modulePath = modulePath,
 				assetPath = assetPath
 			};
+
+			return true;
+		}
+
+		private static bool TryResolveVariationFiles(
+			string root,
+			string variationId,
+			Action<string> log,
+			out VariationDescriptor descriptor,
+			out string descriptorFilePath,
+			out string gameItemPath,
+			out string buildFilePath)
+		{
+			descriptor = null;
+			descriptorFilePath = null;
+			gameItemPath = null;
+			buildFilePath = null;
+			log ??= _ => { };
+
+			descriptorFilePath = FindVariationDescriptorFile(root, variationId);
+			if (string.IsNullOrWhiteSpace(descriptorFilePath))
+			{
+				log($"Skipping '{root}': could not find variation descriptor file named '{variationId}' or '{variationId}.json'.");
+				return false;
+			}
+
+			log($"Using variation descriptor '{descriptorFilePath}'.");
+
+			if (!TryReadVariationDescriptor(descriptorFilePath, out descriptor, log))
+			{
+				log($"Skipping '{root}': failed to parse variation descriptor '{descriptorFilePath}'.");
+				return false;
+			}
+
+			if (descriptor == null)
+			{
+				log($"Skipping '{root}': descriptor is null.");
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(descriptor.gameFileId))
+			{
+				log($"Skipping '{root}': descriptor '{descriptorFilePath}' is missing 'gameFileId'.");
+				return false;
+			}
+
+			gameItemPath = FindGameFile(root, descriptor.gameFileId, log);
+			if (string.IsNullOrWhiteSpace(gameItemPath))
+			{
+				log($"Skipping '{root}': descriptor '{descriptorFilePath}' requested gameFileId '{descriptor.gameFileId}', but no matching payload file was found.");
+				return false;
+			}
+
+			buildFilePath = Path.Combine(root, "build.json");
+			if (!File.Exists(buildFilePath))
+			{
+				log($"Skipping '{root}': build.json was not found.");
+				return false;
+			}
 
 			return true;
 		}
@@ -401,26 +416,6 @@ namespace Plysync.Editor
 			catch (Exception ex)
 			{
 				log?.Invoke($"Failed reading project .plyground '{path}': {ex.Message}");
-				return false;
-			}
-		}
-
-		private static bool TryReadBuildDescriptor(string path, out BuildDescriptor buildDescriptor, Action<string> log)
-		{
-			buildDescriptor = null;
-
-			try
-			{
-				var json = File.ReadAllText(path);
-				if (string.IsNullOrWhiteSpace(json))
-					return false;
-
-				buildDescriptor = JsonUtility.FromJson<BuildDescriptor>(json);
-				return buildDescriptor != null;
-			}
-			catch (Exception ex)
-			{
-				log?.Invoke($"Failed reading build file '{path}': {ex.Message}");
 				return false;
 			}
 		}
@@ -462,7 +457,7 @@ namespace Plysync.Editor
 			}
 		}
 
-		private static string ResolveEnvironmentPathFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log)
+		private static string ResolveEnvironmentPathFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, string seed, Action<string> log)
 		{
 			log ??= _ => { };
 
@@ -504,7 +499,10 @@ namespace Plysync.Editor
 
 			var variationRoot = ResolveProjectFilePath(projectFileDirectory, projectFile?.variation?.folder);
 			if (!string.IsNullOrWhiteSpace(variationRoot))
-				return FindEnvironmentPathInBob(variationRoot, null, log);
+			{
+				log("Project .plyground did not resolve directly to a bob scene. Falling back to variation .bob discovery.");
+				return FindEnvironmentPathInBob(variationRoot, seed, log);
+			}
 
 			return null;
 		}
@@ -522,7 +520,7 @@ namespace Plysync.Editor
 			return null;
 		}
 
-		private static string FindGameFile(string root, string gameFileId)
+		private static string FindGameFile(string root, string gameFileId, Action<string> log = null)
 		{
 			if (string.IsNullOrWhiteSpace(gameFileId))
 				return null;
@@ -538,6 +536,8 @@ namespace Plysync.Editor
 				if (File.Exists(candidate))
 					return candidate;
 			}
+
+			log?.Invoke($"Game payload lookup in '{root}' first tried '{candidates[0]}' and '{candidates[1]}'.");
 
 			try
 			{
