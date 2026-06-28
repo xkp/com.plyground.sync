@@ -22,9 +22,65 @@ namespace Plysync.Editor
 			public string gameFileId;
 		}
 
+		[Serializable]
+		private sealed class PlygroundProjectFile
+		{
+			public string schema;
+			public string format;
+			public int version;
+			public string generatedAt;
+			public PlygroundVariation variation;
+			public PlygroundUnity unity;
+			public PlygroundBob bob;
+		}
+
+		[Serializable]
+		private sealed class PlygroundVariation
+		{
+			public string id;
+			public string name;
+			public string folder;
+		}
+
+		[Serializable]
+		private sealed class PlygroundUnity
+		{
+			public string projectFolder;
+			public string assetsFolder;
+		}
+
+		[Serializable]
+		private sealed class PlygroundBob
+		{
+			public string status;
+			public string outputFolder;
+			public string fbxFolder;
+			public string sceneFile;
+		}
+
+		[Serializable]
+		private sealed class BuildDescriptor
+		{
+			public string projectName;
+			public string selectedGame;
+		}
+
 		public static SyncBuildInfo[] Discover(Action<string> log)
 		{
 			log ??= _ => { };
+
+			var projectFilePath = Path.Combine(Application.dataPath, ".plyground");
+			if (File.Exists(projectFilePath))
+			{
+				if (TryDiscoverFromProjectFile(log, out var projectInfo))
+				{
+					log("Local discovery resolved from Assets/.plyground.");
+					return new[] { projectInfo };
+				}
+
+				log("Assets/.plyground is present but did not resolve to a complete payload.");
+				return Array.Empty<SyncBuildInfo>();
+			}
 
 			var searchRoot = GetVariantSearchRoot();
 			if (string.IsNullOrWhiteSpace(searchRoot) || !Directory.Exists(searchRoot))
@@ -107,6 +163,33 @@ namespace Plysync.Editor
 				: Directory.GetParent(parent)?.FullName;
 		}
 
+		private static bool TryDiscoverFromProjectFile(Action<string> log, out SyncBuildInfo info)
+		{
+			info = null;
+			log ??= _ => { };
+
+			var projectFilePath = Path.Combine(Application.dataPath, ".plyground");
+			if (!File.Exists(projectFilePath))
+			{
+				log($"Project .plyground file not found at '{projectFilePath}'.");
+				return false;
+			}
+
+			if (!TryReadProjectFile(projectFilePath, out var projectFile, log) || projectFile == null)
+			{
+				log($"Failed to parse project .plyground file '{projectFilePath}'.");
+				return false;
+			}
+
+			if (!TryBuildInfoFromProjectFile(projectFilePath, projectFile, log, out info))
+			{
+				log($"Project .plyground file '{projectFilePath}' did not contain a complete payload.");
+				return false;
+			}
+
+			return true;
+		}
+
 		private static IEnumerable<string> EnumerateCandidateRoots(string searchRoot)
 		{
 			yield return searchRoot;
@@ -125,6 +208,96 @@ namespace Plysync.Editor
 				yield return child;
 		}
 
+		private static bool TryBuildInfoFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log, out SyncBuildInfo info)
+		{
+			info = null;
+			log ??= _ => { };
+
+			var projectFileDirectory = Path.GetDirectoryName(projectFilePath);
+			var root = ResolveProjectFilePath(projectFileDirectory, projectFile?.variation?.folder);
+			if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+			{
+				log("Project .plyground is missing a valid variation.folder path.");
+				return false;
+			}
+
+			var variationId = !string.IsNullOrWhiteSpace(projectFile?.variation?.id)
+				? projectFile.variation.id.Trim()
+				: GetVariationIdFromRoot(root);
+			var name = !string.IsNullOrWhiteSpace(projectFile?.variation?.name)
+				? projectFile.variation.name.Trim()
+				: variationId;
+
+			if (string.IsNullOrWhiteSpace(variationId))
+			{
+				log("Project .plyground did not provide a variation id and one could not be derived from the variation folder.");
+				return false;
+			}
+
+			var buildFilePath = Path.Combine(root, "build.json");
+			if (!File.Exists(buildFilePath))
+			{
+				log($"Project variation root '{root}' is missing build.json.");
+				return false;
+			}
+
+			if (!TryReadBuildDescriptor(buildFilePath, out var buildDescriptor, log) || buildDescriptor == null)
+			{
+				log($"Project variation build.json '{buildFilePath}' could not be parsed.");
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(buildDescriptor.projectName))
+				name = buildDescriptor.projectName.Trim();
+
+			if (string.IsNullOrWhiteSpace(name))
+			{
+				log("Project .plyground did not provide a variation name.");
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(buildDescriptor.selectedGame))
+			{
+				log($"Project variation build.json '{buildFilePath}' is missing selectedGame.");
+				return false;
+			}
+
+			var gameItemPath = FindGameFile(root, buildDescriptor.selectedGame);
+			if (string.IsNullOrWhiteSpace(gameItemPath))
+			{
+				log($"Project variation root '{root}' is missing the selectedGame payload '{buildDescriptor.selectedGame}'.");
+				return false;
+			}
+
+			var environmentPath = ResolveEnvironmentPathFromProjectFile(projectFilePath, projectFile, log);
+			if (string.IsNullOrWhiteSpace(environmentPath))
+			{
+				log("Project .plyground did not provide a usable bob scene path.");
+				return false;
+			}
+
+			var modulePath = FindModulePath(root);
+			if (string.IsNullOrWhiteSpace(modulePath) || !Directory.Exists(modulePath))
+			{
+				log($"Skipping '{root}': module path was not found.");
+				return false;
+			}
+
+			info = new SyncBuildInfo
+			{
+				name = name,
+				variationId = variationId,
+				path = root,
+				environmentPath = environmentPath,
+				gameItemPath = gameItemPath,
+				buildFilePath = buildFilePath,
+				modulePath = modulePath,
+				assetPath = FindAssetPath(root)
+			};
+
+			return true;
+		}
+
 		private static bool TryBuildInfo(string root, Action<string> log, out SyncBuildInfo info)
 		{
 			info = null;
@@ -137,7 +310,6 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			// 1) Find a file called as the containing folder and read it as JSON.
 			var variationFilePath = FindVariationDescriptorFile(root, folderName);
 			if (string.IsNullOrWhiteSpace(variationFilePath))
 			{
@@ -151,7 +323,6 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			// 2) Take the name and gameFileId from there, make sure it exists.
 			if (descriptor == null)
 			{
 				log($"Skipping '{root}': descriptor is null.");
@@ -177,7 +348,6 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			// 3) environment path is at ..\..\jobs\{variationName}\{seed}*.json and there must be a threedee.json file there.
 			var environmentPath = FindEnvironmentPath(root, folderName, descriptor.seed, log);
 			if (string.IsNullOrWhiteSpace(environmentPath))
 			{
@@ -185,7 +355,6 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			// 4) module path should be ..\..\biggame\modules
 			var modulePath = FindModulePath(root);
 			if (string.IsNullOrWhiteSpace(modulePath) || !Directory.Exists(modulePath))
 			{
@@ -193,11 +362,7 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			// assetPath is not explicitly described in your rules, but SyncBuildInfo has the field.
-			// Using the parallel location: ..\..\biggame\assets
 			var assetPath = FindAssetPath(root);
-
-			// 5) build file path is on the same folder under the name build.json
 			var buildFilePath = Path.Combine(root, "build.json");
 			if (!File.Exists(buildFilePath))
 			{
@@ -220,17 +385,44 @@ namespace Plysync.Editor
 			return true;
 		}
 
-		private static string FindVariationDescriptorFile(string root, string folderName)
+		private static bool TryReadProjectFile(string path, out PlygroundProjectFile projectFile, Action<string> log)
 		{
-			var exactNoExt = Path.Combine(root, folderName);
-			if (File.Exists(exactNoExt))
-				return exactNoExt;
+			projectFile = null;
 
-			var exactJson = Path.Combine(root, folderName + ".json");
-			if (File.Exists(exactJson))
-				return exactJson;
+			try
+			{
+				var json = File.ReadAllText(path);
+				if (string.IsNullOrWhiteSpace(json))
+					return false;
 
-			return null;
+				projectFile = JsonUtility.FromJson<PlygroundProjectFile>(json);
+				return projectFile != null;
+			}
+			catch (Exception ex)
+			{
+				log?.Invoke($"Failed reading project .plyground '{path}': {ex.Message}");
+				return false;
+			}
+		}
+
+		private static bool TryReadBuildDescriptor(string path, out BuildDescriptor buildDescriptor, Action<string> log)
+		{
+			buildDescriptor = null;
+
+			try
+			{
+				var json = File.ReadAllText(path);
+				if (string.IsNullOrWhiteSpace(json))
+					return false;
+
+				buildDescriptor = JsonUtility.FromJson<BuildDescriptor>(json);
+				return buildDescriptor != null;
+			}
+			catch (Exception ex)
+			{
+				log?.Invoke($"Failed reading build file '{path}': {ex.Message}");
+				return false;
+			}
 		}
 
 		private static bool TryReadVariationDescriptor(string path, out VariationDescriptor descriptor, Action<string> log)
@@ -253,12 +445,88 @@ namespace Plysync.Editor
 			}
 		}
 
+		private static string ResolveProjectFilePath(string projectFileDirectory, string relativeOrAbsolutePath)
+		{
+			if (string.IsNullOrWhiteSpace(relativeOrAbsolutePath))
+				return null;
+
+			try
+			{
+				return Path.IsPathRooted(relativeOrAbsolutePath)
+					? Path.GetFullPath(relativeOrAbsolutePath)
+					: Path.GetFullPath(Path.Combine(projectFileDirectory, relativeOrAbsolutePath));
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static string ResolveEnvironmentPathFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log)
+		{
+			log ??= _ => { };
+
+			var projectFileDirectory = Path.GetDirectoryName(projectFilePath);
+			var sceneFilePath = ResolveProjectFilePath(projectFileDirectory, projectFile?.bob?.sceneFile);
+			if (!string.IsNullOrWhiteSpace(sceneFilePath) && File.Exists(sceneFilePath))
+				return Path.GetDirectoryName(sceneFilePath);
+
+			var bobOutputFolder = ResolveProjectFilePath(projectFileDirectory, projectFile?.bob?.outputFolder);
+			if (!string.IsNullOrWhiteSpace(bobOutputFolder) && Directory.Exists(bobOutputFolder))
+			{
+				var directScenePath = Path.Combine(bobOutputFolder, "threedee_scene.json");
+				if (File.Exists(directScenePath))
+					return bobOutputFolder;
+
+				try
+				{
+					var matchingFolders = Directory
+						.GetDirectories(bobOutputFolder, "*", SearchOption.TopDirectoryOnly)
+						.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+						.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+						.ToArray();
+
+					if (matchingFolders.Length == 1)
+						return matchingFolders[0];
+
+					if (matchingFolders.Length > 1)
+					{
+						log($"Project .plyground outputFolder '{bobOutputFolder}' contains multiple scene folders.");
+						return null;
+					}
+				}
+				catch (Exception ex)
+				{
+					log($"Failed scanning project .plyground outputFolder '{bobOutputFolder}': {ex.Message}");
+					return null;
+				}
+			}
+
+			var variationRoot = ResolveProjectFilePath(projectFileDirectory, projectFile?.variation?.folder);
+			if (!string.IsNullOrWhiteSpace(variationRoot))
+				return FindEnvironmentPathInBob(variationRoot, null, log);
+
+			return null;
+		}
+
+		private static string FindVariationDescriptorFile(string root, string folderName)
+		{
+			var exactNoExt = Path.Combine(root, folderName);
+			if (File.Exists(exactNoExt))
+				return exactNoExt;
+
+			var exactJson = Path.Combine(root, folderName + ".json");
+			if (File.Exists(exactJson))
+				return exactJson;
+
+			return null;
+		}
+
 		private static string FindGameFile(string root, string gameFileId)
 		{
 			if (string.IsNullOrWhiteSpace(gameFileId))
 				return null;
 
-			// Prefer exact common cases in the root first.
 			var candidates = new[]
 			{
 				Path.Combine(root, gameFileId),
@@ -271,7 +539,6 @@ namespace Plysync.Editor
 					return candidate;
 			}
 
-			// Fall back to an immediate search under root only.
 			try
 			{
 				var files = Directory.GetFiles(root, "*", SearchOption.TopDirectoryOnly);
@@ -287,7 +554,6 @@ namespace Plysync.Editor
 			}
 			catch
 			{
-				// ignore
 			}
 
 			return null;

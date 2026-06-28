@@ -283,7 +283,7 @@ namespace Plysync.Editor
 			switch (state)
 			{
 				case UiState.NotPlygroundProject:
-					return "Current state: no valid Plyground payload was found two levels above this Unity project. What to do: verify this is a generated Plyground project if you expected import support.";
+					return "Current state: no valid Plyground payload was found from this project's .plyground file or the legacy external scan. What to do: verify this is a generated Plyground project if you expected import support.";
 				case UiState.FirstRunImport:
 					return "Current state: this looks like a generated Plyground project that has not been imported yet. What to do: import it now.";
 				case UiState.LinkedProject:
@@ -319,7 +319,7 @@ namespace Plysync.Editor
 		{
 			EditorGUILayout.HelpBox(
 				"Not a Plyground project.\n\n" +
-				"No complete payload was found two levels above this Unity project.",
+				"No complete payload was found for this Unity project.",
 				MessageType.Warning
 			);
 
@@ -569,7 +569,7 @@ namespace Plysync.Editor
 
 			try
 			{
-				_status = "Scanning two levels up for variant payloads...";
+				_status = "Scanning project .plyground and fallback payload locations...";
 				_targets = LocalSyncDiscovery.Discover(Log);
 				_selectedIndex = _targets.Length > 0 ? 0 : -1;
 				_discovered = _targets.Length > 0;
