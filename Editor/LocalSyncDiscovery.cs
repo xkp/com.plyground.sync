@@ -467,41 +467,83 @@ namespace Plysync.Editor
 				return Path.GetDirectoryName(sceneFilePath);
 
 			var bobOutputFolder = ResolveProjectFilePath(projectFileDirectory, projectFile?.bob?.outputFolder);
-			if (!string.IsNullOrWhiteSpace(bobOutputFolder) && Directory.Exists(bobOutputFolder))
-			{
-				var directScenePath = Path.Combine(bobOutputFolder, "threedee_scene.json");
-				if (File.Exists(directScenePath))
-					return bobOutputFolder;
+			var outputFolderScenePath = TryResolveSceneDirectoryNearFolderHint(
+				bobOutputFolder,
+				$"Project .plyground outputFolder '{bobOutputFolder}'",
+				log);
+			if (!string.IsNullOrWhiteSpace(outputFolderScenePath))
+				return outputFolderScenePath;
 
-				try
-				{
-					var matchingFolders = Directory
-						.GetDirectories(bobOutputFolder, "*", SearchOption.TopDirectoryOnly)
-						.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
-						.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-						.ToArray();
-
-					if (matchingFolders.Length == 1)
-						return matchingFolders[0];
-
-					if (matchingFolders.Length > 1)
-					{
-						log($"Project .plyground outputFolder '{bobOutputFolder}' contains multiple scene folders.");
-						return null;
-					}
-				}
-				catch (Exception ex)
-				{
-					log($"Failed scanning project .plyground outputFolder '{bobOutputFolder}': {ex.Message}");
-					return null;
-				}
-			}
+			var bobFbxFolder = ResolveProjectFilePath(projectFileDirectory, projectFile?.bob?.fbxFolder);
+			var fbxFolderScenePath = TryResolveSceneDirectoryNearFolderHint(
+				bobFbxFolder,
+				$"Project .plyground fbxFolder '{bobFbxFolder}'",
+				log);
+			if (!string.IsNullOrWhiteSpace(fbxFolderScenePath))
+				return fbxFolderScenePath;
 
 			var variationRoot = ResolveProjectFilePath(projectFileDirectory, projectFile?.variation?.folder);
 			if (!string.IsNullOrWhiteSpace(variationRoot))
 			{
 				log("Project .plyground did not resolve directly to a bob scene. Falling back to variation .bob discovery.");
 				return FindEnvironmentPathInBob(variationRoot, seed, log);
+			}
+
+			return null;
+		}
+
+		private static string TryResolveSceneDirectoryNearFolderHint(string folderPath, string label, Action<string> log)
+		{
+			if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+				return null;
+
+			try
+			{
+				if (File.Exists(Path.Combine(folderPath, "threedee_scene.json")))
+					return folderPath;
+
+				var childMatches = Directory
+					.GetDirectories(folderPath, "*", SearchOption.TopDirectoryOnly)
+					.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+					.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+
+				if (childMatches.Length == 1)
+					return childMatches[0];
+
+				if (childMatches.Length > 1)
+				{
+					log?.Invoke($"{label} contains multiple scene folders.");
+					return null;
+				}
+
+				var parentFolder = Directory.GetParent(folderPath)?.FullName;
+				if (!string.IsNullOrWhiteSpace(parentFolder) && Directory.Exists(parentFolder))
+				{
+					if (File.Exists(Path.Combine(parentFolder, "threedee_scene.json")))
+						return parentFolder;
+
+					var siblingMatches = Directory
+						.GetDirectories(parentFolder, "*", SearchOption.TopDirectoryOnly)
+						.Where(dir => !string.Equals(dir, folderPath, StringComparison.OrdinalIgnoreCase))
+						.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
+						.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+						.ToArray();
+
+					if (siblingMatches.Length == 1)
+						return siblingMatches[0];
+
+					if (siblingMatches.Length > 1)
+					{
+						log?.Invoke($"{label} parent folder contains multiple sibling scene folders.");
+						return null;
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				log?.Invoke($"Failed scanning {label}: {ex.Message}");
+				return null;
 			}
 
 			return null;
