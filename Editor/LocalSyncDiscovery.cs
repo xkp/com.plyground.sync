@@ -642,7 +642,7 @@ namespace Plysync.Editor
 			if (!Directory.Exists(bobDir))
 			{
 				log?.Invoke($"Variation .bob folder not found: {bobDir}");
-				return null;
+				bobDir = root;
 			}
 
 			var directSceneFile = Path.Combine(bobDir, "threedee_scene.json");
