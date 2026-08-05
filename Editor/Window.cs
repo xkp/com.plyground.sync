@@ -3,7 +3,6 @@ using Plyground.Editor;
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -58,7 +57,6 @@ namespace Plysync.Editor
 		private bool _autoSyncBeforePublish = false;
 		private Texture2D _logoTexture;
 		private GUIStyle _headerBodyStyle;
-		private GUIStyle _gamePopupStyle;
 
 		[MenuItem("Plyground/Sync")]
 		public static void Open() => GetWindow<PlysyncWindow>("plyground");
@@ -283,7 +281,7 @@ namespace Plysync.Editor
 			switch (state)
 			{
 				case UiState.NotPlygroundProject:
-					return "Current state: no valid Plyground payload was found from this project's .plyground file or the legacy external scan. What to do: verify this is a generated Plyground project if you expected import support.";
+					return "Current state: no valid Plyground payload was found in this project's Assets/.plyground file. What to do: verify this is a generated Plyground project if you expected import support.";
 				case UiState.FirstRunImport:
 					return "Current state: this looks like a generated Plyground project that has not been imported yet. What to do: import it now.";
 				case UiState.LinkedProject:
@@ -303,23 +301,11 @@ namespace Plysync.Editor
 			};
 		}
 
-		private void EnsureGamePopupStyle()
-		{
-			if (_gamePopupStyle != null) return;
-
-			_gamePopupStyle = new GUIStyle(EditorStyles.popup)
-			{
-				fontSize = 12,
-				fixedHeight = 28f
-			};
-			_gamePopupStyle.padding = new RectOffset(10, 24, 10, 10);
-		}
-
 		private void DrawNotPlygroundProject()
 		{
 			EditorGUILayout.HelpBox(
 				"Not a Plyground project.\n\n" +
-				"No complete payload was found for this Unity project.",
+				"No complete payload was found in Assets/.plyground for this Unity project.",
 				MessageType.Warning
 			);
 
@@ -358,11 +344,8 @@ namespace Plysync.Editor
 			}
 			else
 			{
-				EditorGUILayout.HelpBox("Multiple valid payloads were found. Select one to import.", MessageType.Info);
-				string[] labels = _targets.Select(t => t.name).ToArray();
-				_selectedIndex = Mathf.Clamp(_selectedIndex, 0, Math.Max(0, labels.Length - 1));
-				EnsureGamePopupStyle();
-				_selectedIndex = EditorGUILayout.Popup(_selectedIndex, labels, _gamePopupStyle, GUILayout.Height(40));
+				_selectedIndex = 0;
+				EditorGUILayout.HelpBox("Only one local payload should be discoverable. Using the first result from Assets/.plyground.", MessageType.Info);
 			}
 
 			EditorGUILayout.Space(8);
@@ -559,7 +542,7 @@ namespace Plysync.Editor
 			}
 			else if (_targets.Length > 1)
 			{
-				Log("Multiple local project candidates found. Select one to import.");
+				Log("Multiple local project results were returned unexpectedly. Using the first payload from Assets/.plyground.");
 			}
 		}
 
@@ -569,11 +552,11 @@ namespace Plysync.Editor
 
 			try
 			{
-				_status = "Scanning project .plyground and fallback payload locations...";
+				_status = "Scanning Assets/.plyground...";
 				_targets = LocalSyncDiscovery.Discover(Log);
 				_selectedIndex = _targets.Length > 0 ? 0 : -1;
 				_discovered = _targets.Length > 0;
-				_status = _targets.Length > 0 ? $"Found {_targets.Length} local project(s)" : "No complete local payload found";
+				_status = _targets.Length > 0 ? "Found local project" : "No complete local payload found";
 			}
 			catch (Exception e)
 			{
@@ -966,14 +949,10 @@ namespace Plysync.Editor
 		{
 			info = null;
 
-			if (_linkedSyncInfo != null && LocalSyncDiscovery.TryFindByRoot(_linkedSyncInfo.path, out info))
+			if (LocalSyncDiscovery.TryDiscoverCurrentProject(Log, out info))
 				return true;
 
-			if (!string.IsNullOrWhiteSpace(_linkedGameId) && LocalSyncDiscovery.TryFindByRoot(_linkedGameId, out info))
-				return true;
-
-			var discovered = LocalSyncDiscovery.Discover(Log);
-			info = discovered.FirstOrDefault(t => string.Equals(t.path, _linkedGameId, StringComparison.OrdinalIgnoreCase));
+			info = _linkedSyncInfo ?? _cache.LoadSyncInfo(_linkedGameId);
 			return info != null;
 		}
 
@@ -1006,12 +985,10 @@ namespace Plysync.Editor
 			if (info != null)
 				return true;
 
-			if (LocalSyncDiscovery.TryFindByRoot(pendingImportPath, out info))
+			if (LocalSyncDiscovery.TryDiscoverCurrentProject(Log, out info))
 				return true;
 
-			var discovered = LocalSyncDiscovery.Discover(Log);
-			info = discovered.FirstOrDefault(t => string.Equals(t.path, pendingImportPath, StringComparison.OrdinalIgnoreCase));
-			return info != null;
+			return false;
 		}
 
 		private void ScaffoldInboxCheck()

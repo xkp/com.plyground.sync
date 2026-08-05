@@ -47,6 +47,21 @@ namespace Plysync.Editor
 		{
 			public string projectFolder;
 			public string assetsFolder;
+			public string moduleId;
+			public string templateId;
+			public PlygroundInstalledModule[] installedModules;
+		}
+
+		[Serializable]
+		private sealed class PlygroundInstalledModule
+		{
+			public string moduleId;
+			public string moduleName;
+			public string modulePath;
+			public string templatePath;
+			public string packagesPath;
+			public string assetsPath;
+			public string plygroundPath;
 		}
 
 		[Serializable]
@@ -62,48 +77,23 @@ namespace Plysync.Editor
 		{
 			log ??= _ => { };
 
-			var projectFilePath = Path.Combine(Application.dataPath, ".plyground");
-			if (File.Exists(projectFilePath))
+			if (TryDiscoverCurrentProject(log, out var info))
 			{
-				if (TryDiscoverFromProjectFile(log, out var projectInfo))
-				{
-					log("Local discovery resolved from Assets/.plyground.");
-					return new[] { projectInfo };
-				}
-
-				log("Assets/.plyground is present but did not resolve to a complete payload.");
-				return Array.Empty<SyncBuildInfo>();
+				log("Local discovery resolved from Assets/.plyground.");
+				return new[] { info };
 			}
 
-			var searchRoot = GetVariantSearchRoot();
-			if (string.IsNullOrWhiteSpace(searchRoot) || !Directory.Exists(searchRoot))
-			{
-				log("Variant search root was not found two levels above the Unity project.");
-				return Array.Empty<SyncBuildInfo>();
-			}
+			return Array.Empty<SyncBuildInfo>();
+		}
 
-			log($"Inspecting variant root: {searchRoot}");
+		public static bool TryDiscoverCurrentProject(out SyncBuildInfo info)
+		{
+			return TryDiscoverCurrentProject(null, out info);
+		}
 
-			var candidates = new List<SyncBuildInfo>();
-			var seenRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-			foreach (var root in EnumerateCandidateRoots(searchRoot))
-			{
-				if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
-					continue;
-
-				if (!seenRoots.Add(root))
-					continue;
-
-				if (TryBuildInfo(root, log, out var info))
-					candidates.Add(info);
-			}
-
-			log($"Local discovery found {candidates.Count} candidate project(s).");
-
-			return candidates
-				.OrderBy(x => x.name, StringComparer.OrdinalIgnoreCase)
-				.ToArray();
+		public static bool TryDiscoverCurrentProject(Action<string> log, out SyncBuildInfo info)
+		{
+			return TryDiscoverFromProjectFile(log, out info);
 		}
 
 		public static bool TryFindByRoot(string rootPath, out SyncBuildInfo info)
@@ -118,10 +108,13 @@ namespace Plysync.Editor
 			if (string.IsNullOrWhiteSpace(rootPath))
 				return false;
 
-			if (!Directory.Exists(rootPath))
+			if (!TryDiscoverCurrentProject(log, out info) || info == null)
 				return false;
 
-			return TryBuildInfo(rootPath, log, out info);
+			return string.Equals(
+				Path.GetFullPath(info.path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+				Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+				StringComparison.OrdinalIgnoreCase);
 		}
 
 		public static string GetInboxFolderAbsolutePath()
@@ -145,15 +138,6 @@ namespace Plysync.Editor
 			{
 				return null;
 			}
-		}
-
-		public static string GetVariantSearchRoot()
-		{
-			var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-			var parent = Directory.GetParent(projectRoot)?.FullName;
-			return string.IsNullOrWhiteSpace(parent)
-				? null
-				: Directory.GetParent(parent)?.FullName;
 		}
 
 		private static bool TryDiscoverFromProjectFile(Action<string> log, out SyncBuildInfo info)
@@ -181,24 +165,6 @@ namespace Plysync.Editor
 			}
 
 			return true;
-		}
-
-		private static IEnumerable<string> EnumerateCandidateRoots(string searchRoot)
-		{
-			yield return searchRoot;
-
-			string[] children;
-			try
-			{
-				children = Directory.GetDirectories(searchRoot);
-			}
-			catch
-			{
-				yield break;
-			}
-
-			foreach (var child in children)
-				yield return child;
 		}
 
 		private static bool TryBuildInfoFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log, out SyncBuildInfo info)
@@ -271,78 +237,19 @@ namespace Plysync.Editor
 				return false;
 			}
 
-			var modulePath = FindModulePath(root);
+			var modulePath = ResolveModulePathFromProjectFile(projectFilePath, projectFile, log);
 			if (string.IsNullOrWhiteSpace(modulePath) || !Directory.Exists(modulePath))
 			{
 				log($"Skipping '{root}': module path was not found.");
 				return false;
 			}
+
+			var assetPath = ResolveAssetPathFromProjectFile(projectFilePath, projectFile, log);
 
 			info = new SyncBuildInfo
 			{
 				name = name,
 				variationId = variationId,
-				path = root,
-				environmentPath = environmentPath,
-				gameItemPath = gameItemPath,
-				buildFilePath = buildFilePath,
-				modulePath = modulePath,
-				assetPath = FindAssetPath(root)
-			};
-
-			return true;
-		}
-
-		private static bool TryBuildInfo(string root, Action<string> log, out SyncBuildInfo info)
-		{
-			info = null;
-			log ??= _ => { };
-
-			var folderName = GetVariationIdFromRoot(root);
-			if (string.IsNullOrWhiteSpace(folderName))
-			{
-				log($"Skipping '{root}': could not determine the variation folder name.");
-				return false;
-			}
-
-			if (!TryResolveVariationFiles(
-				root,
-				folderName,
-				log,
-				out var descriptor,
-				out _,
-				out var gameItemPath,
-				out var buildFilePath))
-			{
-				return false;
-			}
-
-			if (string.IsNullOrWhiteSpace(descriptor.name))
-			{
-				log($"Skipping '{root}': descriptor is missing 'name'.");
-				return false;
-			}
-
-			var environmentPath = FindEnvironmentPath(root, folderName, descriptor.seed, log);
-			if (string.IsNullOrWhiteSpace(environmentPath))
-			{
-				log($"Skipping '{root}': could not resolve environment path for variation '{descriptor.name}' and seed '{descriptor.seed}'.");
-				return false;
-			}
-
-			var modulePath = FindModulePath(root);
-			if (string.IsNullOrWhiteSpace(modulePath) || !Directory.Exists(modulePath))
-			{
-				log($"Skipping '{root}': module path was not found.");
-				return false;
-			}
-
-			var assetPath = FindAssetPath(root);
-
-			info = new SyncBuildInfo
-			{
-				name = descriptor.name,
-				variationId = folderName,
 				path = root,
 				environmentPath = environmentPath,
 				gameItemPath = gameItemPath,
@@ -505,6 +412,142 @@ namespace Plysync.Editor
 			return null;
 		}
 
+		private static string ResolveModulePathFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log)
+		{
+			log ??= _ => { };
+
+			if (TryResolveInstalledModuleSelection(projectFilePath, projectFile, log, out var selectedModule, out var installedModules))
+			{
+				var selectedRoot = GetParentDirectory(selectedModule.modulePath);
+				if (!string.IsNullOrWhiteSpace(selectedRoot) && Directory.Exists(selectedRoot))
+				{
+					log($"Project .plyground resolved module cache root '{selectedRoot}' from unity.installedModules.");
+					return selectedRoot;
+				}
+			}
+
+			var commonRoot = TryResolveCommonModuleRoot(projectFilePath, installedModules, log);
+			if (!string.IsNullOrWhiteSpace(commonRoot))
+			{
+				log($"Project .plyground resolved module cache root '{commonRoot}' from unity.installedModules.");
+				return commonRoot;
+			}
+
+			var fallback = FindModulePath();
+			if (!string.IsNullOrWhiteSpace(fallback) && Directory.Exists(fallback))
+			{
+				log($"Project .plyground fell back to legacy module cache root '{fallback}'.");
+				return fallback;
+			}
+
+			return fallback;
+		}
+
+		private static string ResolveAssetPathFromProjectFile(string projectFilePath, PlygroundProjectFile projectFile, Action<string> log)
+		{
+			log ??= _ => { };
+
+			if (TryResolveInstalledModuleSelection(projectFilePath, projectFile, log, out var selectedModule, out var installedModules))
+			{
+				var selectedAssetsPath = ResolveProjectFilePath(Path.GetDirectoryName(projectFilePath), selectedModule.assetsPath);
+				if (!string.IsNullOrWhiteSpace(selectedAssetsPath) && Directory.Exists(selectedAssetsPath))
+				{
+					log($"Project .plyground resolved asset cache path '{selectedAssetsPath}' from unity.installedModules.");
+					return selectedAssetsPath;
+				}
+			}
+
+			foreach (var installedModule in installedModules ?? Array.Empty<PlygroundInstalledModule>())
+			{
+				var candidate = ResolveProjectFilePath(Path.GetDirectoryName(projectFilePath), installedModule?.assetsPath);
+				if (!string.IsNullOrWhiteSpace(candidate) && Directory.Exists(candidate))
+				{
+					log($"Project .plyground resolved asset cache path '{candidate}' from unity.installedModules.");
+					return candidate;
+				}
+			}
+
+			var fallback = FindAssetPath();
+			if (!string.IsNullOrWhiteSpace(fallback) && Directory.Exists(fallback))
+			{
+				log($"Project .plyground fell back to legacy asset cache path '{fallback}'.");
+				return fallback;
+			}
+
+			return fallback;
+		}
+
+		private static bool TryResolveInstalledModuleSelection(
+			string projectFilePath,
+			PlygroundProjectFile projectFile,
+			Action<string> log,
+			out PlygroundInstalledModule selectedModule,
+			out PlygroundInstalledModule[] installedModules)
+		{
+			selectedModule = null;
+			installedModules = projectFile?.unity?.installedModules ?? Array.Empty<PlygroundInstalledModule>();
+
+			if (installedModules.Length == 0)
+				return false;
+
+			var selectedModuleId = (projectFile?.unity?.moduleId ?? "").Trim();
+			if (!string.IsNullOrWhiteSpace(selectedModuleId))
+			{
+				selectedModule = installedModules.FirstOrDefault(module =>
+					string.Equals((module?.moduleId ?? "").Trim(), selectedModuleId, StringComparison.OrdinalIgnoreCase));
+				if (selectedModule != null)
+					return true;
+
+				log?.Invoke($"Project .plyground unity.moduleId '{selectedModuleId}' was not found in unity.installedModules.");
+			}
+
+			selectedModule = installedModules.FirstOrDefault(module =>
+			{
+				var resolved = ResolveProjectFilePath(Path.GetDirectoryName(projectFilePath), module?.modulePath);
+				return !string.IsNullOrWhiteSpace(resolved) && Directory.Exists(resolved);
+			});
+
+			return selectedModule != null;
+		}
+
+		private static string TryResolveCommonModuleRoot(string projectFilePath, PlygroundInstalledModule[] installedModules, Action<string> log)
+		{
+			var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (var installedModule in installedModules ?? Array.Empty<PlygroundInstalledModule>())
+			{
+				var modulePath = ResolveProjectFilePath(Path.GetDirectoryName(projectFilePath), installedModule?.modulePath);
+				if (string.IsNullOrWhiteSpace(modulePath) || !Directory.Exists(modulePath))
+					continue;
+
+				var parent = GetParentDirectory(modulePath);
+				if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
+					roots.Add(parent);
+			}
+
+			if (roots.Count == 1)
+				return roots.First();
+
+			if (roots.Count > 1)
+				log?.Invoke("Project .plyground unity.installedModules resolved multiple module cache roots. Falling back to the selected module root.");
+
+			return null;
+		}
+
+		private static string GetParentDirectory(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+				return null;
+
+			try
+			{
+				return Directory.GetParent(path)?.FullName;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
 		private static string TryResolveSceneDirectoryNearFolderHint(string folderPath, string label, Action<string> log)
 		{
 			if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
@@ -614,80 +657,6 @@ namespace Plysync.Editor
 			return null;
 		}
 
-		private static string FindEnvironmentPath(string root, string variationName, string seed, Action<string> log)
-		{
-			if (string.IsNullOrWhiteSpace(variationName))
-				return null;
-
-			var jobsVariationDir = Path.GetFullPath(Path.Combine(root, "..", "..", "jobs", variationName));
-			if (!Directory.Exists(jobsVariationDir))
-			{
-				log?.Invoke($"Jobs variation folder not found: {jobsVariationDir}");
-				return FindEnvironmentPathInBob(root, seed, log);
-			}
-
-			if (!string.IsNullOrWhiteSpace(seed))
-			{
-				string[] seedJsonFiles;
-				try
-				{
-					seedJsonFiles = Directory.GetFiles(jobsVariationDir, seed + "*.json", SearchOption.TopDirectoryOnly);
-				}
-				catch (Exception ex)
-				{
-					log?.Invoke($"Failed searching seed json files in '{jobsVariationDir}': {ex.Message}");
-					return null;
-				}
-
-				if (seedJsonFiles != null && seedJsonFiles.Length > 0)
-				{
-					foreach (var seedJsonFile in seedJsonFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-					{
-						var seedFolder = Path.Combine(jobsVariationDir, Path.GetFileNameWithoutExtension(seedJsonFile));
-						var threedeeJson = Path.Combine(seedFolder, "threedee_scene.json");
-
-						if (Directory.Exists(seedFolder) && File.Exists(threedeeJson))
-							return seedFolder;
-					}
-
-					log?.Invoke($"Seed json files were found, but no matching folder with threedee_scene.json was found under '{jobsVariationDir}'.");
-				}
-				else
-				{
-					log?.Invoke($"No seed json files found in '{jobsVariationDir}' for pattern '{seed}*.json'. Falling back to folder scan.");
-				}
-			}
-
-			try
-			{
-				var matchingFolders = Directory
-					.GetDirectories(jobsVariationDir, "*", SearchOption.TopDirectoryOnly)
-					.Where(dir => File.Exists(Path.Combine(dir, "threedee_scene.json")))
-					.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-					.ToArray();
-
-				if (matchingFolders.Length == 1)
-				{
-					log?.Invoke($"Using fallback environment folder: {matchingFolders[0]}");
-					return matchingFolders[0];
-				}
-
-				if (matchingFolders.Length > 1)
-				{
-					log?.Invoke($"Environment fallback found multiple folders with threedee_scene.json under '{jobsVariationDir}'.");
-					return null;
-				}
-			}
-			catch (Exception ex)
-			{
-				log?.Invoke($"Failed scanning fallback environment folders in '{jobsVariationDir}': {ex.Message}");
-				return null;
-			}
-
-			log?.Invoke($"No environment folder containing threedee_scene.json was found under '{jobsVariationDir}'. Trying variation .bob.");
-			return FindEnvironmentPathInBob(root, seed, log);
-		}
-
 		private static string FindEnvironmentPathInBob(string root, string seed, Action<string> log)
 		{
 			if (string.IsNullOrWhiteSpace(root))
@@ -760,7 +729,7 @@ namespace Plysync.Editor
 			return null;
 		}
 
-		private static string FindModulePath(string root)
+		private static string FindModulePath()
 		{
 			try
 			{
@@ -774,7 +743,7 @@ namespace Plysync.Editor
 			}
 		}
 
-		private static string FindAssetPath(string root)
+		private static string FindAssetPath()
 		{
 			try
 			{

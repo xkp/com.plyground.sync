@@ -1,6 +1,4 @@
 #if UNITY_EDITOR
-using System;
-using System.IO;
 using UnityEditor;
 using Plyground.Editor;
 
@@ -35,8 +33,7 @@ namespace Plysync.Editor
 
 			if (HasImportedProject()) return;
 
-			var targets = LocalSyncDiscovery.Discover(_ => { });
-			if (targets == null || targets.Length == 0) return;
+			if (!LocalSyncDiscovery.TryDiscoverCurrentProject(out _)) return;
 
 			PlysyncWindow.Open();
 		}
