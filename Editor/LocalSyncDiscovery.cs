@@ -207,10 +207,23 @@ namespace Plysync.Editor
 			log ??= _ => { };
 
 			var projectFileDirectory = Path.GetDirectoryName(projectFilePath);
-			var root = ResolveProjectFilePath(projectFileDirectory, projectFile?.variation?.folder);
-			if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+			var rawVariationFolder = projectFile?.variation?.folder;
+			var root = ResolveProjectFilePath(projectFileDirectory, rawVariationFolder);
+			if (string.IsNullOrWhiteSpace(rawVariationFolder))
 			{
-				log("Project .plyground is missing a valid variation.folder path.");
+				log("Project .plyground is missing 'variation.folder'.");
+				return false;
+			}
+
+			if (string.IsNullOrWhiteSpace(root))
+			{
+				log($"Project .plyground variation.folder could not be resolved: '{rawVariationFolder}'.");
+				return false;
+			}
+
+			if (!Directory.Exists(root))
+			{
+				log($"Project .plyground variation.folder does not exist: '{root}'.");
 				return false;
 			}
 

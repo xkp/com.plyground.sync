@@ -629,11 +629,13 @@ namespace Plysync.Editor
 			{
 				Log("Import cancelled.");
 				ImportSessionState.ClearPendingImportPath();
+				ImportSessionState.ClearPackageInstallSequencePath();
 			}
 			catch (Exception e)
 			{
 				Log("Import failed: " + e);
 				ImportSessionState.ClearPendingImportPath();
+				ImportSessionState.ClearPackageInstallSequencePath();
 			}
 			finally
 			{

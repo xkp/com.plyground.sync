@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -20,6 +21,16 @@ using UnityEngine.Networking;
 			ImportedPackageRequiresReload
 		}
 
+		public readonly struct PackageInstallOptions
+		{
+			public PackageInstallOptions(bool isBrandNewProject)
+			{
+				IsBrandNewProject = isBrandNewProject;
+			}
+
+			public bool IsBrandNewProject { get; }
+		}
+
 		[InitializeOnLoad]
 		public static class PackageInstaller
 		{
@@ -32,7 +43,7 @@ using UnityEngine.Networking;
 				AssetDatabase.importPackageCancelled += OnImportPackageCancelled;
 			}
 
-			public static async Task<PackageInstallOutcome> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct)
+			public static async Task<PackageInstallOutcome> Install(PackagesBlock pkgs, Action<string> log, CancellationToken ct, PackageInstallOptions options = default)
 			{
 				if (pkgs == null)
 				{
@@ -51,7 +62,7 @@ using UnityEngine.Networking;
 			//}
 				if (pkgs.value != null && pkgs.value.Length > 0)
 				{
-					var importedPackage = await InstallUnityPackages(pkgs.value, log, ct);
+					var importedPackage = await InstallUnityPackages(pkgs.value, log, ct, options);
 					if (importedPackage)
 						return PackageInstallOutcome.ImportedPackageRequiresReload;
 				}
@@ -69,7 +80,9 @@ using UnityEngine.Networking;
 			if (pkgs.value != null)
 			{
 				pkgs.value = pkgs.value
-					.Where(p => p != null)
+					.Where(p => !string.IsNullOrWhiteSpace(p))
+					.Select(p => p.Trim())
+					.Distinct(StringComparer.OrdinalIgnoreCase)
 					.OrderBy(p => p.Contains("plyground"))
 					.ToArray();
 			}
@@ -123,12 +136,12 @@ using UnityEngine.Networking;
 			return changed;
 		}
 
-		private static Task<bool> InstallUnityPackages(string[] packages, Action<string> log, CancellationToken ct)
+		private static Task<bool> InstallUnityPackages(string[] packages, Action<string> log, CancellationToken ct, PackageInstallOptions options)
 		{
-				return InstallUnityPackagesAsync(packages, log, ct);
+				return InstallUnityPackagesAsync(packages, log, ct, options);
 			}
 
-			private static async Task<bool> InstallUnityPackagesAsync(string[] packages, Action<string> log, CancellationToken ct)
+			private static async Task<bool> InstallUnityPackagesAsync(string[] packages, Action<string> log, CancellationToken ct, PackageInstallOptions options)
 			{
 				foreach (var pkg in packages)
 				{
@@ -141,12 +154,26 @@ using UnityEngine.Networking;
 					var fingerprint = GetUnityPackageFingerprint(pkg);
 					var installedKey = GetUnityPackageInstalledKey(identity);
 					var installedFingerprint = EditorPrefs.GetString(installedKey, "");
+					var canSkipFromRecordedInstall = !options.IsBrandNewProject;
 
-					if (!string.IsNullOrWhiteSpace(fingerprint) &&
-						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+					if (canSkipFromRecordedInstall &&
+						!string.IsNullOrWhiteSpace(fingerprint) &&
+						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase) &&
+						HasImportedUnityPackageContent(pkg, log))
 					{
 						log($".unitypackage already imported: {Path.GetFileName(pkg)}");
 						continue;
+					}
+
+					if (!canSkipFromRecordedInstall && !string.IsNullOrWhiteSpace(installedFingerprint))
+					{
+						log($".unitypackage recorded state ignored for brand-new project: {Path.GetFileName(pkg)}");
+					}
+					else if (!string.IsNullOrWhiteSpace(fingerprint) &&
+						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+					{
+						log($".unitypackage import record was stale, so it will be re-imported: {Path.GetFileName(pkg)}");
+						EditorPrefs.DeleteKey(installedKey);
 					}
 
 					var localPath = pkg; // await ResolveUnityPackageFilePath(pkg, log, ct);
@@ -223,12 +250,14 @@ using UnityEngine.Networking;
 		private static void OnImportPackageFailed(string packageName, string error)
 		{
 			ImportSessionState.ClearPendingPackageImport();
+			ImportSessionState.ClearPackageInstallSequencePath();
 			Debug.LogError($"Failed importing Unity package '{packageName}': {error}");
 		}
 
 		private static void OnImportPackageCancelled(string packageName)
 		{
 			ImportSessionState.ClearPendingPackageImport();
+			ImportSessionState.ClearPackageInstallSequencePath();
 			Debug.LogWarning($"Cancelled Unity package import: {packageName}");
 		}
 
@@ -329,6 +358,201 @@ using UnityEngine.Networking;
 			catch
 			{
 				return "unknown-project";
+			}
+		}
+
+		private static bool HasImportedUnityPackageContent(string packagePath, Action<string> log)
+		{
+			try
+			{
+				var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+				if (string.IsNullOrWhiteSpace(projectRoot) || !Directory.Exists(projectRoot))
+					return true;
+
+				var knownPaths = EnumerateUnityPackageAssetPaths(packagePath).ToArray();
+				if (knownPaths.Length == 0)
+				{
+					log?.Invoke($"Could not verify imported contents for {Path.GetFileName(packagePath)} from the package archive. Falling back to the recorded import state.");
+					return true;
+				}
+
+				foreach (var relativePath in knownPaths)
+				{
+					var absolutePath = ToProjectAbsolutePath(projectRoot, relativePath);
+					if (string.IsNullOrWhiteSpace(absolutePath))
+						continue;
+
+					if (File.Exists(absolutePath) || Directory.Exists(absolutePath))
+						return true;
+				}
+
+				return false;
+			}
+			catch (Exception ex)
+			{
+				log?.Invoke($"Failed verifying imported contents for {Path.GetFileName(packagePath)}: {ex.Message}. Falling back to the recorded import state.");
+				return true;
+			}
+		}
+
+		private static IEnumerable<string> EnumerateUnityPackageAssetPaths(string packagePath)
+		{
+			using var fileStream = File.OpenRead(packagePath);
+			using var gzipStream = new GZipStream(fileStream, CompressionMode.Decompress);
+
+			var header = new byte[512];
+			while (TryReadTarBlock(gzipStream, header))
+			{
+				if (IsZeroBlock(header))
+					yield break;
+
+				var entryName = ReadTarString(header, 0, 100);
+				var size = ReadTarOctal(header, 124, 12);
+				var dataSize = AlignTarSize(size);
+
+				if (size < 0)
+					yield break;
+
+				if (string.Equals(Path.GetFileName(entryName), "pathname", StringComparison.OrdinalIgnoreCase) && size > 0)
+				{
+					var content = ReadTarEntryString(gzipStream, size, dataSize);
+					var relativePath = NormalizeUnityPackageAssetPath(content);
+					if (!string.IsNullOrWhiteSpace(relativePath))
+						yield return relativePath;
+				}
+				else
+				{
+					SkipTarEntry(gzipStream, dataSize);
+				}
+			}
+		}
+
+		private static string NormalizeUnityPackageAssetPath(string rawPath)
+		{
+			if (string.IsNullOrWhiteSpace(rawPath))
+				return null;
+
+			var normalized = rawPath.Trim().Replace('\\', '/');
+			if (normalized.StartsWith("./", StringComparison.Ordinal))
+				normalized = normalized.Substring(2);
+
+			if (normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+				normalized.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase) ||
+				normalized.StartsWith("ProjectSettings/", StringComparison.OrdinalIgnoreCase))
+				return normalized;
+
+			return null;
+		}
+
+		private static string ToProjectAbsolutePath(string projectRoot, string relativePath)
+		{
+			if (string.IsNullOrWhiteSpace(projectRoot) || string.IsNullOrWhiteSpace(relativePath))
+				return null;
+
+			try
+			{
+				var fullPath = Path.GetFullPath(Path.Combine(projectRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+				return fullPath.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase) ? fullPath : null;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static bool TryReadTarBlock(Stream stream, byte[] buffer)
+		{
+			var offset = 0;
+			while (offset < buffer.Length)
+			{
+				var read = stream.Read(buffer, offset, buffer.Length - offset);
+				if (read <= 0)
+					return offset > 0 ? throw new EndOfStreamException("Unexpected end of tar stream.") : false;
+
+				offset += read;
+			}
+
+			return true;
+		}
+
+		private static bool IsZeroBlock(byte[] buffer)
+		{
+			for (var i = 0; i < buffer.Length; i++)
+			{
+				if (buffer[i] != 0)
+					return false;
+			}
+
+			return true;
+		}
+
+		private static string ReadTarString(byte[] buffer, int offset, int count)
+		{
+			var value = Encoding.UTF8.GetString(buffer, offset, count);
+			var terminator = value.IndexOf('\0');
+			if (terminator >= 0)
+				value = value.Substring(0, terminator);
+
+			return value.Trim();
+		}
+
+		private static long ReadTarOctal(byte[] buffer, int offset, int count)
+		{
+			var value = ReadTarString(buffer, offset, count).Trim();
+			if (string.IsNullOrWhiteSpace(value))
+				return 0;
+
+			try
+			{
+				return Convert.ToInt64(value, 8);
+			}
+			catch
+			{
+				return -1;
+			}
+		}
+
+		private static long AlignTarSize(long size)
+		{
+			const int blockSize = 512;
+			return ((size + blockSize - 1) / blockSize) * blockSize;
+		}
+
+		private static string ReadTarEntryString(Stream stream, long size, long paddedSize)
+		{
+			var bytes = new byte[paddedSize];
+			ReadExact(stream, bytes, 0, bytes.Length);
+			return Encoding.UTF8.GetString(bytes, 0, (int)size);
+		}
+
+		private static void SkipTarEntry(Stream stream, long paddedSize)
+		{
+			if (paddedSize <= 0)
+				return;
+
+			var buffer = new byte[4096];
+			var remaining = paddedSize;
+			while (remaining > 0)
+			{
+				var toRead = (int)Math.Min(buffer.Length, remaining);
+				var read = stream.Read(buffer, 0, toRead);
+				if (read <= 0)
+					throw new EndOfStreamException("Unexpected end of tar stream while skipping entry.");
+
+				remaining -= read;
+			}
+		}
+
+		private static void ReadExact(Stream stream, byte[] buffer, int offset, int count)
+		{
+			var totalRead = 0;
+			while (totalRead < count)
+			{
+				var read = stream.Read(buffer, offset + totalRead, count - totalRead);
+				if (read <= 0)
+					throw new EndOfStreamException("Unexpected end of stream.");
+
+				totalRead += read;
 			}
 		}
 

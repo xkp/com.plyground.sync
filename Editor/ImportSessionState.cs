@@ -10,6 +10,7 @@ namespace Plysync.Editor
 		private const string PendingImportPathKey = "Plysync.PendingImportPath";
 		private const string PendingPackagePathKey = "Plysync.PendingPackage.Path";
 		private const string PendingPackageFingerprintKey = "Plysync.PendingPackage.Fingerprint";
+		private const string PackageInstallSequencePathKey = "Plysync.PackageInstallSequence.Path";
 		private const string PendingPublishGameIdKey = "Plysync.PendingPublish.GameId";
 		private const string PendingPublishVariationIdKey = "Plysync.PendingPublish.VariationId";
 		private const string PendingPublishRevisionKey = "Plysync.PendingPublish.Revision";
@@ -50,6 +51,32 @@ namespace Plysync.Editor
 		public static void ClearPendingImportPath()
 		{
 			SessionState.EraseString(PendingImportPathKey);
+		}
+
+		public static void SavePackageInstallSequencePath(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+			{
+				ClearPackageInstallSequencePath();
+				return;
+			}
+
+			SessionState.SetString(PackageInstallSequencePathKey, path);
+		}
+
+		public static bool HasPackageInstallSequencePath(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+				return false;
+
+			var currentPath = SessionState.GetString(PackageInstallSequencePathKey, "");
+			return !string.IsNullOrWhiteSpace(currentPath) &&
+				string.Equals(currentPath, path, System.StringComparison.OrdinalIgnoreCase);
+		}
+
+		public static void ClearPackageInstallSequencePath()
+		{
+			SessionState.EraseString(PackageInstallSequencePathKey);
 		}
 
 		public static void SavePendingPackageImport(string packagePath, string fingerprint)

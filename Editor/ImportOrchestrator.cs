@@ -42,6 +42,9 @@ using UnityEngine;
 			if (string.IsNullOrWhiteSpace(info.path)) throw new Exception("info.path is required");
 
 			var gameId = info.path; // stable ID for marker + cache
+			var cached = _cache.Read(gameId);
+			var hasStartedPackageInstallSequence = ImportSessionState.HasPackageInstallSequencePath(gameId);
+			var isBrandNewProject = cached == null && !hasStartedPackageInstallSequence;
 
 			// OPTIONAL: parse build.json for revision + packages (if present)
 			string revision = "unknown";
@@ -87,9 +90,14 @@ using UnityEngine;
  			{
  				_cache.SaveSyncInfo(info);
  				ImportSessionState.SavePendingImportPath(info.path);
+ 				ImportSessionState.SavePackageInstallSequencePath(info.path);
  				_log($"Prepared pending import resume state for: {info.path}");
  				_progress("Installing packages...", 0.15f);
- 				var packageInstallOutcome = await PackageInstaller.Install(packages, _log, ct);
+ 				var packageInstallOutcome = await PackageInstaller.Install(
+					packages,
+					_log,
+					ct,
+					new PackageInstallOptions(isBrandNewProject));
 				ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
  				_log(packageInstallOutcome == PackageInstallOutcome.ImportedPackageRequiresReload
  					? "Package import started and Unity must reload before continuing."
@@ -101,6 +109,7 @@ using UnityEngine;
 			else
 			{
 				_log("No packages block (or build.json missing). Skipping package install.");
+				ImportSessionState.ClearPackageInstallSequencePath();
 			}
 
 			if (filesToRemove.Length > 0)
@@ -110,7 +119,6 @@ using UnityEngine;
 			}
 
 			// Revision-based cache short-circuit (only if we actually have a revision)
-			var cached = _cache.Read(gameId);
 			if (cached != null && revision != "unknown" && cached.lastImportedRevision == revision)
 			{
 				_log($"No changes. revision={revision}");
@@ -172,6 +180,7 @@ using UnityEngine;
 
 			_progress("Done.", 1f);
 			ImportSessionState.ClearPendingImportPath();
+			ImportSessionState.ClearPackageInstallSequencePath();
 			return ImportRunResult.Completed;
 		}
 
@@ -411,7 +420,12 @@ using UnityEngine;
 
 			return new PackagesBlock
 			{
-				value = a.value.Concat(b.value).Distinct().ToArray(),
+				value = a.value
+					.Concat(b.value)
+					.Where(x => !string.IsNullOrWhiteSpace(x))
+					.Select(x => x.Trim())
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.ToArray(),
 			};
 		}
 
