@@ -156,10 +156,15 @@ using UnityEngine.Networking;
 					var installedFingerprint = EditorPrefs.GetString(installedKey, "");
 					var canSkipFromRecordedInstall = !options.IsBrandNewProject;
 
+					if (ImportSessionState.HasInstalledPackageIdentity(identity))
+					{
+						log($".unitypackage already imported in this install sequence: {Path.GetFileName(pkg)}");
+						continue;
+					}
+
 					if (canSkipFromRecordedInstall &&
 						!string.IsNullOrWhiteSpace(fingerprint) &&
-						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase) &&
-						HasImportedUnityPackageContent(pkg, log))
+						string.Equals(installedFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
 					{
 						log($".unitypackage already imported: {Path.GetFileName(pkg)}");
 						continue;
@@ -232,9 +237,11 @@ using UnityEngine.Networking;
 			if (!string.IsNullOrWhiteSpace(packagePath))
 			{
 				log?.Invoke($"Finalizing previously imported package after Unity reload: {Path.GetFileName(packagePath)}");
-				var installedKey = GetUnityPackageInstalledKey(GetUnityPackageIdentity(packagePath));
+				var identity = GetUnityPackageIdentity(packagePath);
+				var installedKey = GetUnityPackageInstalledKey(identity);
 				if (!string.IsNullOrWhiteSpace(fingerprint))
 					EditorPrefs.SetString(installedKey, fingerprint);
+				ImportSessionState.MarkInstalledPackageIdentity(identity);
 			}
 
 			ImportSessionState.ClearPendingPackageImport();
@@ -369,21 +376,29 @@ using UnityEngine.Networking;
 				if (string.IsNullOrWhiteSpace(projectRoot) || !Directory.Exists(projectRoot))
 					return true;
 
-				var knownPaths = EnumerateUnityPackageAssetPaths(packagePath).ToArray();
-				if (knownPaths.Length == 0)
+				var knownFilePaths = EnumerateUnityPackageAssetPaths(packagePath)
+					.Where(IsRelevantUnityPackageFilePath)
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+				if (knownFilePaths.Length == 0)
 				{
-					log?.Invoke($"Could not verify imported contents for {Path.GetFileName(packagePath)} from the package archive. Falling back to the recorded import state.");
+					log?.Invoke($"Could not verify concrete asset files for {Path.GetFileName(packagePath)} from the package archive. Falling back to the recorded import state.");
 					return true;
 				}
 
-				foreach (var relativePath in knownPaths)
+				var existingFileCount = 0;
+				foreach (var relativePath in knownFilePaths)
 				{
 					var absolutePath = ToProjectAbsolutePath(projectRoot, relativePath);
 					if (string.IsNullOrWhiteSpace(absolutePath))
 						continue;
 
-					if (File.Exists(absolutePath) || Directory.Exists(absolutePath))
-						return true;
+					if (File.Exists(absolutePath))
+					{
+						existingFileCount++;
+						if (existingFileCount >= GetRequiredInstalledFileCount(knownFilePaths.Length))
+							return true;
+					}
 				}
 
 				return false;
@@ -442,6 +457,34 @@ using UnityEngine.Networking;
 				return normalized;
 
 			return null;
+		}
+
+		private static bool IsRelevantUnityPackageFilePath(string path)
+		{
+			if (string.IsNullOrWhiteSpace(path))
+				return false;
+
+			if (path.StartsWith("ProjectSettings/", StringComparison.OrdinalIgnoreCase))
+				return false;
+
+			return LooksLikeFilePath(path);
+		}
+
+		private static bool LooksLikeFilePath(string path)
+		{
+			var fileName = Path.GetFileName(path);
+			return !string.IsNullOrWhiteSpace(Path.GetExtension(fileName));
+		}
+
+		private static int GetRequiredInstalledFileCount(int totalFileCount)
+		{
+			if (totalFileCount <= 0)
+				return 1;
+
+			if (totalFileCount <= 3)
+				return totalFileCount;
+
+			return Math.Min(3, totalFileCount);
 		}
 
 		private static string ToProjectAbsolutePath(string projectRoot, string relativePath)
