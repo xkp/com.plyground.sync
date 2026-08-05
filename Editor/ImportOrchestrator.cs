@@ -45,6 +45,7 @@ using UnityEngine;
 			var cached = _cache.Read(gameId);
 			var hasStartedPackageInstallSequence = ImportSessionState.HasPackageInstallSequencePath(gameId);
 			var isBrandNewProject = cached == null && !hasStartedPackageInstallSequence;
+			var useRecordedInstallState = cached != null;
 
 			// OPTIONAL: parse build.json for revision + packages (if present)
 			string revision = "unknown";
@@ -97,7 +98,7 @@ using UnityEngine;
 					packages,
 					_log,
 					ct,
-					new PackageInstallOptions(isBrandNewProject));
+					new PackageInstallOptions(isBrandNewProject, useRecordedInstallState));
 				ProjectVersionUpdater.EnsureCurrentEditorVersion(_log);
  				_log(packageInstallOutcome == PackageInstallOutcome.ImportedPackageRequiresReload
  					? "Package import started and Unity must reload before continuing."

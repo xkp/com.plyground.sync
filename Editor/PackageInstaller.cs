@@ -23,12 +23,14 @@ using UnityEngine.Networking;
 
 		public readonly struct PackageInstallOptions
 		{
-			public PackageInstallOptions(bool isBrandNewProject)
+			public PackageInstallOptions(bool isBrandNewProject, bool useRecordedInstallState)
 			{
 				IsBrandNewProject = isBrandNewProject;
+				UseRecordedInstallState = useRecordedInstallState;
 			}
 
 			public bool IsBrandNewProject { get; }
+			public bool UseRecordedInstallState { get; }
 		}
 
 		[InitializeOnLoad]
@@ -154,7 +156,7 @@ using UnityEngine.Networking;
 					var fingerprint = GetUnityPackageFingerprint(pkg);
 					var installedKey = GetUnityPackageInstalledKey(identity);
 					var installedFingerprint = EditorPrefs.GetString(installedKey, "");
-					var canSkipFromRecordedInstall = !options.IsBrandNewProject;
+					var canSkipFromRecordedInstall = options.UseRecordedInstallState && !options.IsBrandNewProject;
 
 					if (ImportSessionState.HasInstalledPackageIdentity(identity))
 					{
@@ -170,7 +172,7 @@ using UnityEngine.Networking;
 						continue;
 					}
 
-					if (!canSkipFromRecordedInstall && !string.IsNullOrWhiteSpace(installedFingerprint))
+					if (options.IsBrandNewProject && !string.IsNullOrWhiteSpace(installedFingerprint))
 					{
 						log($".unitypackage recorded state ignored for brand-new project: {Path.GetFileName(pkg)}");
 					}
