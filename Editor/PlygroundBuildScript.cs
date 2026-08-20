@@ -14,6 +14,14 @@ using Newtonsoft.Json.Linq;
 
 public class PlygroundBuildScript
 {
+	[Serializable]
+	class ProgressPayload
+	{
+		public string phase;
+		public int progressPercent;
+		public string message;
+	}
+
 	internal static class Configuration
 	{
 		public static string inputFolder { get; set; }
@@ -129,6 +137,27 @@ public class PlygroundBuildScript
 
 	static string CreateStep = "create";
 	static string InstallStep = "install";
+
+	private static void ReportProgress(string phase, int progressPercent, string message)
+	{
+		var payload = new ProgressPayload
+		{
+			phase = phase ?? "running",
+			progressPercent = Mathf.Clamp(progressPercent, 0, 100),
+			message = message ?? string.Empty
+		};
+		Debug.Log("[PLY_PROGRESS]" + JsonUtility.ToJson(payload));
+	}
+
+	private static void LogResolvedPaths(string inputFolder, string outputFolder, string gameItemPath, string modulePath, string assetPath, string buildFilePath)
+	{
+		Debug.Log($"[plyground-build] inputFolder={inputFolder}");
+		Debug.Log($"[plyground-build] outputFolder={outputFolder}");
+		Debug.Log($"[plyground-build] gameItemPath={gameItemPath}");
+		Debug.Log($"[plyground-build] modulePath={modulePath}");
+		Debug.Log($"[plyground-build] assetPath={assetPath}");
+		Debug.Log($"[plyground-build] buildFilePath={buildFilePath}");
+	}
 
 	public static void Create()
 	{
@@ -540,6 +569,7 @@ public class PlygroundBuildScript
 
 	public static async void CreateGame()
 	{
+		ReportProgress("scaffolding_inputs", 5, "Resolving Unity build inputs.");
 		Console.WriteLine("Creating folder structure...");
 		string inputFolder;
 		string outputFolder;
@@ -550,11 +580,13 @@ public class PlygroundBuildScript
 			return;
 
 		string buildFilePath = Path.Combine(Path.GetDirectoryName(gameItemPath), "build.json");
+		LogResolvedPaths(inputFolder, outputFolder, gameItemPath, modulePath, assetPath, buildFilePath);
 
 		Console.WriteLine($"gameItemPath = {gameItemPath}");
 		Console.WriteLine($"modulePath = {modulePath}");
 		Console.WriteLine($"buildFilePath = {buildFilePath}");
 
+		ReportProgress("opening_scene", 12, "Opening the main Unity scene.");
 		Console.WriteLine("Starting scene generation...");
 		Scene scene = OpenMainScene();
 		if (!scene.IsValid())
@@ -563,20 +595,26 @@ public class PlygroundBuildScript
 			return;
 		}
 
+		ReportProgress("importing_environment", 24, "Importing environment assets.");
 		Console.WriteLine("Loading environment assets...");
 		var postProcess = new List<PostProcessNode>();
 		ImportEnvironmentLikeSync(inputFolder, postProcess);
 
+		ReportProgress("importing_items", 42, "Importing gameplay items.");
 		await PlygroundLoader.Load(gameItemPath, buildFilePath, modulePath, assetPath, postProcess);
 
 		//save before generating light maps
+		ReportProgress("saving_scene", 58, "Saving the imported Unity scene.");
 		EditorSceneManager.SaveScene(scene);
 
+		ReportProgress("baking_lightmaps", 66, "Baking lightmaps.");
 		Console.WriteLine("Generating lightmaps...");
 		GenerateLightmaps();
 
+		ReportProgress("building_navmesh", 76, "Building navmesh surfaces.");
 		UpdateNavMeshes();
 
+		ReportProgress("final_scene_save", 82, "Saving scene after lighting and navmesh updates.");
 		Console.WriteLine("Finishing...");
 		EditorSceneManager.SaveScene(scene);
 
@@ -586,6 +624,7 @@ public class PlygroundBuildScript
 		PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
 		//PlayerSettings.WebGL.template = "plyground";
 
+		ReportProgress("building_webgl", 88, "Building the WebGL player.");
 		string buildPath = Path.Combine(outputFolder, "Build");
 		BuildPipeline.BuildPlayer(new BuildPlayerOptions
 		{
@@ -597,6 +636,7 @@ public class PlygroundBuildScript
 		});
 
 		Debug.Log("Build completed. Build located at: " + buildPath);
+		ReportProgress("complete", 100, "Unity headless build completed.");
 	}
 
 	private static void UpdateNavMeshes()
@@ -616,6 +656,7 @@ public class PlygroundBuildScript
 
 	public static async void UpdateGame()
 	{
+		ReportProgress("scaffolding_inputs", 5, "Resolving Unity update inputs.");
 		string inputFolder;
 		string outputFolder;
 		string gameItemPath;
@@ -625,7 +666,9 @@ public class PlygroundBuildScript
 			return;
 
 		string buildFilePath = Path.Combine(Path.GetDirectoryName(gameItemPath), "build.json");
+		LogResolvedPaths(inputFolder, outputFolder, gameItemPath, modulePath, assetPath, buildFilePath);
 
+		ReportProgress("opening_scene", 15, "Opening the main Unity scene.");
 		Scene scene = OpenMainScene();
 		if (!scene.IsValid())
 		{
@@ -633,18 +676,22 @@ public class PlygroundBuildScript
 			return;
 		}
 
+		ReportProgress("updating_items", 42, "Updating gameplay items.");
 		Console.WriteLine("Loading environment assets...");
 		await PlygroundLoader.Update(gameItemPath, buildFilePath, modulePath, assetPath);
 
+		ReportProgress("building_navmesh", 68, "Building navmesh surfaces.");
 		UpdateNavMeshes();
 
 		//save before generating light maps
+		ReportProgress("saving_scene", 78, "Saving the updated Unity scene.");
 		EditorSceneManager.SaveScene(scene);
 
 		// Trigger a build
 		PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
 		//PlayerSettings.WebGL.template = "plyground";
 
+		ReportProgress("building_webgl", 88, "Building the WebGL player.");
 		string buildPath = Path.Combine(outputFolder, "Build");
 
 		BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -657,6 +704,7 @@ public class PlygroundBuildScript
 		});
 
 		Debug.Log("Build completed. Build located at: " + buildPath);
+		ReportProgress("complete", 100, "Unity headless update build completed.");
 	}
 
 	private static void GenerateLightmaps()
