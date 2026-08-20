@@ -882,11 +882,16 @@ public class PlygroundBuildScript
 		if (string.IsNullOrWhiteSpace(inputFolder) || !Directory.Exists(inputFolder))
 			throw new DirectoryNotFoundException("Environment input folder not found: " + inputFolder);
 
+		var resolvedInputFolder = ResolveEnvironmentInputFolder(inputFolder);
+		if (string.IsNullOrWhiteSpace(resolvedInputFolder) || !Directory.Exists(resolvedInputFolder))
+			throw new DirectoryNotFoundException("Resolved environment input folder not found: " + resolvedInputFolder);
+
 		var outputFolder = Path.Combine(Application.dataPath, "plyground", "Environment").Replace("\\", "/");
 		EnsureAssetFolder("Assets/plyground/Environment");
+		Debug.Log("[plyground-build] environmentInputFolder=" + resolvedInputFolder);
 
 		ThreedeeLoader.Load(
-			inputFolder,
+			resolvedInputFolder,
 			outputFolder,
 			postProcess ?? new List<PostProcessNode>()
 		);
@@ -894,6 +899,152 @@ public class PlygroundBuildScript
 		EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
 		AssetDatabase.SaveAssets();
 		AssetDatabase.Refresh();
+	}
+
+	private static string ResolveEnvironmentInputFolder(string inputFolder)
+	{
+		if (ContainsSceneFile(inputFolder))
+			return inputFolder;
+
+		var bridgePath = Path.Combine(Application.dataPath, ".plyground");
+		var bridgeFolder = TryResolveEnvironmentFolderFromBridge(bridgePath);
+		if (!string.IsNullOrWhiteSpace(bridgeFolder))
+			return bridgeFolder;
+
+		var artifactsEnvironmentRoot = Path.Combine(inputFolder, "artifacts", "environment");
+		var artifactFolder = TryFindEnvironmentFolderRecursively(artifactsEnvironmentRoot);
+		if (!string.IsNullOrWhiteSpace(artifactFolder))
+			return artifactFolder;
+
+		return inputFolder;
+	}
+
+	private static string TryResolveEnvironmentFolderFromBridge(string bridgePath)
+	{
+		if (string.IsNullOrWhiteSpace(bridgePath) || !File.Exists(bridgePath))
+			return null;
+
+		try
+		{
+			var bridge = JObject.Parse(File.ReadAllText(bridgePath));
+			var projectFileDirectory = Path.GetDirectoryName(bridgePath);
+			var sceneFilePath = ResolveProjectFilePath(projectFileDirectory, bridge.SelectToken("bob.sceneFile")?.ToString());
+			if (!string.IsNullOrWhiteSpace(sceneFilePath) && File.Exists(sceneFilePath))
+				return Path.GetDirectoryName(sceneFilePath);
+
+			var outputFolder = ResolveProjectFilePath(projectFileDirectory, bridge.SelectToken("bob.outputFolder")?.ToString());
+			var outputFolderScenePath = TryResolveSceneDirectoryNearFolderHint(outputFolder);
+			if (!string.IsNullOrWhiteSpace(outputFolderScenePath))
+				return outputFolderScenePath;
+
+			var fbxFolder = ResolveProjectFilePath(projectFileDirectory, bridge.SelectToken("bob.fbxFolder")?.ToString());
+			var fbxFolderScenePath = TryResolveSceneDirectoryNearFolderHint(fbxFolder);
+			if (!string.IsNullOrWhiteSpace(fbxFolderScenePath))
+				return fbxFolderScenePath;
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning("[plyground-build] Failed to resolve environment folder from bridge: " + ex.Message);
+		}
+
+		return null;
+	}
+
+	private static string ResolveProjectFilePath(string projectFileDirectory, string relativeOrAbsolutePath)
+	{
+		if (string.IsNullOrWhiteSpace(relativeOrAbsolutePath))
+			return null;
+
+		try
+		{
+			return Path.IsPathRooted(relativeOrAbsolutePath)
+				? Path.GetFullPath(relativeOrAbsolutePath)
+				: Path.GetFullPath(Path.Combine(projectFileDirectory, relativeOrAbsolutePath));
+		}
+		catch
+		{
+			return null;
+		}
+	}
+
+	private static bool ContainsSceneFile(string folderPath)
+	{
+		return !string.IsNullOrWhiteSpace(folderPath)
+			&& Directory.Exists(folderPath)
+			&& File.Exists(Path.Combine(folderPath, "threedee_scene.json"));
+	}
+
+	private static string TryResolveSceneDirectoryNearFolderHint(string folderPath)
+	{
+		if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+			return null;
+
+		try
+		{
+			if (ContainsSceneFile(folderPath))
+				return folderPath;
+
+			var childMatches = Directory
+				.GetDirectories(folderPath, "*", SearchOption.TopDirectoryOnly)
+				.Where(ContainsSceneFile)
+				.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+				.ToArray();
+
+			if (childMatches.Length == 1)
+				return childMatches[0];
+
+			var parentFolder = Directory.GetParent(folderPath)?.FullName;
+			if (!string.IsNullOrWhiteSpace(parentFolder) && Directory.Exists(parentFolder))
+			{
+				if (ContainsSceneFile(parentFolder))
+					return parentFolder;
+
+				var siblingMatches = Directory
+					.GetDirectories(parentFolder, "*", SearchOption.TopDirectoryOnly)
+					.Where(dir => !string.Equals(dir, folderPath, StringComparison.OrdinalIgnoreCase))
+					.Where(ContainsSceneFile)
+					.OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+
+				if (siblingMatches.Length == 1)
+					return siblingMatches[0];
+			}
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning("[plyground-build] Failed scanning environment folder hint '" + folderPath + "': " + ex.Message);
+		}
+
+		return null;
+	}
+
+	private static string TryFindEnvironmentFolderRecursively(string rootFolder)
+	{
+		if (string.IsNullOrWhiteSpace(rootFolder) || !Directory.Exists(rootFolder))
+			return null;
+
+		try
+		{
+			var matches = Directory
+				.GetDirectories(rootFolder, "*", SearchOption.AllDirectories)
+				.Where(ContainsSceneFile)
+				.OrderByDescending(path => Directory.GetLastWriteTimeUtc(path))
+				.ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+				.ToArray();
+
+			if (matches.Length == 0)
+				return null;
+
+			if (matches.Length > 1)
+				Debug.LogWarning("[plyground-build] Multiple environment folders contained threedee_scene.json under '" + rootFolder + "'. Using newest: " + matches[0]);
+
+			return matches[0];
+		}
+		catch (Exception ex)
+		{
+			Debug.LogWarning("[plyground-build] Failed scanning environment artifacts under '" + rootFolder + "': " + ex.Message);
+			return null;
+		}
 	}
 
 	private static Scene OpenMainScene()
