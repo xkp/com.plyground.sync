@@ -252,6 +252,12 @@ using UnityEngine.Networking;
 
 		private static void OnImportPackageCompleted(string packageName)
 		{
+			if (PlygroundBuildScript.HasPendingHeadlessBuild())
+			{
+				EditorApplication.delayCall += PlygroundBuildScript.ResumePendingBuild;
+				return;
+			}
+
 			if (ImportSessionState.TryLoadPendingImportPath(out _))
 				EditorApplication.delayCall += PlysyncWindow.ResumePendingImport;
 		}

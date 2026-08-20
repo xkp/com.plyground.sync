@@ -16,6 +16,12 @@ namespace Plysync.Editor
 
 		private static void TryOpenOnStartup()
 		{
+			if (PlygroundBuildScript.HasPendingHeadlessBuild())
+			{
+				PlygroundBuildScript.ResumePendingBuild();
+				return;
+			}
+
 			if (ImportSessionState.TryLoadPendingImportPath(out _))
 			{
 				PlysyncWindow.ResumePendingImport();

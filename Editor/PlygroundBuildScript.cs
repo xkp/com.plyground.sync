@@ -8,9 +8,11 @@ using System.Linq;
 using UnityEngine.SceneManagement;
 using Unity.AI.Navigation;
 using System.Threading.Tasks;
+using System.Threading;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using Newtonsoft.Json.Linq;
+using Plysync.Editor;
 
 public class PlygroundBuildScript
 {
@@ -30,6 +32,11 @@ public class PlygroundBuildScript
 		public static string modulePath { get; set; }
 		public static string buildFile { get; set; }
 	}
+
+	private const string PendingHeadlessBuildActionKey = "Plyground.HeadlessBuild.Action";
+	private const string PendingHeadlessBuildPackageManifestPathKey = "Plyground.HeadlessBuild.PackageManifestPath";
+	private const string HeadlessBuildActionCreate = "create_game";
+	private const string HeadlessBuildActionUpdate = "update_game";
 
 	static void BindDirectories()
 	{
@@ -157,6 +164,119 @@ public class PlygroundBuildScript
 		Debug.Log($"[plyground-build] modulePath={modulePath}");
 		Debug.Log($"[plyground-build] assetPath={assetPath}");
 		Debug.Log($"[plyground-build] buildFilePath={buildFilePath}");
+	}
+
+	private static string GetCommandLineArgumentValue(string optionName)
+	{
+		if (string.IsNullOrWhiteSpace(optionName))
+			return null;
+
+		string[] args = System.Environment.GetCommandLineArgs();
+		for (var i = 0; i < args.Length - 1; i++)
+		{
+			if (string.Equals(args[i], optionName, StringComparison.Ordinal))
+				return args[i + 1];
+		}
+
+		return null;
+	}
+
+	private static string ResolveHeadlessPackageManifestPath()
+	{
+		var packageManifestPath = GetCommandLineArgumentValue("-packageManifest");
+		return string.IsNullOrWhiteSpace(packageManifestPath) ? null : Path.GetFullPath(packageManifestPath);
+	}
+
+	private static void SavePendingHeadlessBuild(string action, string packageManifestPath)
+	{
+		if (string.IsNullOrWhiteSpace(action))
+		{
+			ClearPendingHeadlessBuild();
+			return;
+		}
+
+		SessionState.SetString(PendingHeadlessBuildActionKey, action);
+		if (string.IsNullOrWhiteSpace(packageManifestPath))
+			SessionState.EraseString(PendingHeadlessBuildPackageManifestPathKey);
+		else
+			SessionState.SetString(PendingHeadlessBuildPackageManifestPathKey, packageManifestPath);
+	}
+
+	private static void ClearPendingHeadlessBuild()
+	{
+		SessionState.EraseString(PendingHeadlessBuildActionKey);
+		SessionState.EraseString(PendingHeadlessBuildPackageManifestPathKey);
+	}
+
+	private static bool TryLoadPendingHeadlessBuild(out string action, out string packageManifestPath)
+	{
+		action = SessionState.GetString(PendingHeadlessBuildActionKey, "");
+		packageManifestPath = SessionState.GetString(PendingHeadlessBuildPackageManifestPathKey, "");
+		return !string.IsNullOrWhiteSpace(action);
+	}
+
+	public static bool HasPendingHeadlessBuild()
+	{
+		return TryLoadPendingHeadlessBuild(out _, out _);
+	}
+
+	public static void ResumePendingBuild()
+	{
+		if (!TryLoadPendingHeadlessBuild(out var action, out _))
+			return;
+
+		Debug.Log($"[plyground-build] Resuming pending headless build action: {action}");
+		if (string.Equals(action, HeadlessBuildActionUpdate, StringComparison.Ordinal))
+			UpdateGame();
+		else
+			CreateGame();
+	}
+
+	private static PackagesBlock LoadPackageManifest(string packageManifestPath)
+	{
+		if (string.IsNullOrWhiteSpace(packageManifestPath))
+			return null;
+
+		if (!File.Exists(packageManifestPath))
+			throw new FileNotFoundException("Unity package manifest file was not found.", packageManifestPath);
+
+		var json = File.ReadAllText(packageManifestPath);
+		if (string.IsNullOrWhiteSpace(json))
+			return null;
+
+		return JsonUtility.FromJson<PackagesBlock>(json);
+	}
+
+	private static async Task<bool> EnsurePackagesInstalledForHeadlessBuild(string action, string buildIdentity, string packageManifestPath)
+	{
+		var packages = LoadPackageManifest(packageManifestPath);
+		if (packages?.value == null || packages.value.Length == 0)
+		{
+			ClearPendingHeadlessBuild();
+			ImportSessionState.ClearPackageInstallSequencePath();
+			return true;
+		}
+
+		SavePendingHeadlessBuild(action, packageManifestPath);
+		ImportSessionState.SavePackageInstallSequencePath(buildIdentity ?? action);
+		ReportProgress("installing_packages", 14, $"Installing {packages.value.Length} Unity package(s) inside the project.");
+
+		var packageInstallOutcome = await PackageInstaller.Install(
+			packages,
+			(message) => Debug.Log("[plyground-build] " + message),
+			CancellationToken.None,
+			new PackageInstallOptions(false, true));
+
+		if (packageInstallOutcome == PackageInstallOutcome.ImportedPackageRequiresReload)
+		{
+			ReportProgress("waiting_for_reload", 18, "Unity imported a package and is reloading before the build resumes.");
+			return false;
+		}
+
+		ImportSessionState.ClearPackageInstallSequencePath();
+		ClearPendingHeadlessBuild();
+		ReportProgress("packages_installed", 22, "Unity package installation completed.");
+		return true;
 	}
 
 	public static void Create()
@@ -580,11 +700,20 @@ public class PlygroundBuildScript
 			return;
 
 		string buildFilePath = Path.Combine(Path.GetDirectoryName(gameItemPath), "build.json");
+		string packageManifestPath = ResolveHeadlessPackageManifestPath();
 		LogResolvedPaths(inputFolder, outputFolder, gameItemPath, modulePath, assetPath, buildFilePath);
 
 		Console.WriteLine($"gameItemPath = {gameItemPath}");
 		Console.WriteLine($"modulePath = {modulePath}");
 		Console.WriteLine($"buildFilePath = {buildFilePath}");
+
+		if (!await EnsurePackagesInstalledForHeadlessBuild(
+			HeadlessBuildActionCreate,
+			Path.GetFullPath(outputFolder ?? buildFilePath ?? HeadlessBuildActionCreate),
+			packageManifestPath))
+		{
+			return;
+		}
 
 		ReportProgress("opening_scene", 12, "Opening the main Unity scene.");
 		Console.WriteLine("Starting scene generation...");
@@ -666,7 +795,16 @@ public class PlygroundBuildScript
 			return;
 
 		string buildFilePath = Path.Combine(Path.GetDirectoryName(gameItemPath), "build.json");
+		string packageManifestPath = ResolveHeadlessPackageManifestPath();
 		LogResolvedPaths(inputFolder, outputFolder, gameItemPath, modulePath, assetPath, buildFilePath);
+
+		if (!await EnsurePackagesInstalledForHeadlessBuild(
+			HeadlessBuildActionUpdate,
+			Path.GetFullPath(outputFolder ?? buildFilePath ?? HeadlessBuildActionUpdate),
+			packageManifestPath))
+		{
+			return;
+		}
 
 		ReportProgress("opening_scene", 15, "Opening the main Unity scene.");
 		Scene scene = OpenMainScene();
