@@ -148,6 +148,9 @@ namespace Plysync.Editor
 				return;
 			}
 
+			if (LocalSyncDiscovery.HasCurrentProjectFile())
+				return;
+
 			var lastGameId = _cache.LoadLastGameId();
 			if (string.IsNullOrWhiteSpace(lastGameId))
 				return;

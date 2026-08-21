@@ -96,6 +96,18 @@ namespace Plysync.Editor
 			return TryDiscoverFromProjectFile(log, out info);
 		}
 
+		public static bool HasCurrentProjectFile()
+		{
+			try
+			{
+				return File.Exists(Path.Combine(Application.dataPath, ".plyground"));
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
 		public static bool TryFindByRoot(string rootPath, out SyncBuildInfo info)
 		{
 			return TryFindByRoot(rootPath, null, out info);
