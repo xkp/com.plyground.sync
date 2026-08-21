@@ -49,15 +49,9 @@ namespace Plysync.Editor
 			if (EnvironmentImporter.TryGetMarker(out var marker) && !string.IsNullOrWhiteSpace(marker.gameId))
 				return true;
 
-			if (LocalSyncDiscovery.HasCurrentProjectFile())
-				return false;
-
-			var cache = new CacheStore();
-			var lastGameId = cache.LoadLastGameId();
-			if (string.IsNullOrWhiteSpace(lastGameId))
-				return false;
-
-			return cache.LoadSyncInfo(lastGameId) != null;
+			// Cache entries are shared between Unity projects. Only a marker in this
+			// project's scene proves that this project has already been imported.
+			return false;
 		}
 	}
 }

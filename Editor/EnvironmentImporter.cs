@@ -6,6 +6,7 @@ using System.IO;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using RuntimeSceneMarker = Plyground.Sync.Runtime.SceneMarker;
 
 namespace Plyground.Editor
 {
@@ -52,8 +53,8 @@ namespace Plyground.Editor
 				postProcess ?? new List<PostProcessNode>()
 			);
 
-			// Best-effort marker write. Import should not fail if editor-only
-			// marker attachment is unavailable in the current scene context.
+			// Best-effort marker write. Import should not fail if marker attachment
+			// is unavailable in the current scene context.
 			TryEnsureMarker(gameId, revision, info, log);
 
 			EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
@@ -61,9 +62,9 @@ namespace Plyground.Editor
 			AssetDatabase.Refresh();
 		}
 
-		public static bool TryGetMarker(out SceneMarker marker)
+		public static bool TryGetMarker(out RuntimeSceneMarker marker)
 		{
-			marker = UnityEngine.Object.FindFirstObjectByType<SceneMarker>();
+			marker = UnityEngine.Object.FindFirstObjectByType<RuntimeSceneMarker>();
 			return marker != null;
 		}
 
@@ -78,11 +79,11 @@ namespace Plyground.Editor
 			{
 				if (!TryGetMarker(out var marker))
 				{
-					var go = new GameObject(MarkerName);
-					marker = go.AddComponent<SceneMarker>();
+					var go = GameObject.Find(MarkerName) ?? new GameObject(MarkerName);
+					marker = go.AddComponent<RuntimeSceneMarker>();
 					if (marker == null)
 					{
-						log?.Invoke("Skipping Plyground marker: editor-only SceneMarker could not be attached.");
+						log?.Invoke("Skipping Plyground marker: runtime SceneMarker could not be attached.");
 						return;
 					}
 

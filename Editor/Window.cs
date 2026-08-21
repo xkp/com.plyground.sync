@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using RuntimeSceneMarker = Plyground.Sync.Runtime.SceneMarker;
 
 namespace Plysync.Editor
 {
@@ -148,20 +149,8 @@ namespace Plysync.Editor
 				return;
 			}
 
-			if (LocalSyncDiscovery.HasCurrentProjectFile())
-				return;
-
-			var lastGameId = _cache.LoadLastGameId();
-			if (string.IsNullOrWhiteSpace(lastGameId))
-				return;
-
-			var cachedSyncInfo = _cache.LoadSyncInfo(lastGameId);
-			if (cachedSyncInfo == null)
-				return;
-
-			_linkedGameId = lastGameId;
-			_linkedRevision = ResolveRevisionFromSyncInfo(cachedSyncInfo);
-			_linkedSyncInfo = cachedSyncInfo;
+			// Cache entries are shared between Unity projects, so they cannot establish
+			// that the currently open project has been imported. A scene marker can.
 		}
 
 		private void OnGUI()
@@ -530,6 +519,7 @@ namespace Plysync.Editor
 			}
 
 			await DiscoverTargets();
+			RestoreMarkerFromCurrentProjectCache();
 
 			if (!string.IsNullOrWhiteSpace(_linkedGameId))
 			{
@@ -572,6 +562,25 @@ namespace Plysync.Editor
 
 			Repaint();
 			return Task.CompletedTask;
+		}
+
+		private void RestoreMarkerFromCurrentProjectCache()
+		{
+			if (!string.IsNullOrWhiteSpace(_linkedGameId) || _targets == null || _targets.Length != 1)
+				return;
+
+			var currentPayload = _targets[0];
+			var imported = _cache.Read(currentPayload.path);
+			var cachedSyncInfo = _cache.LoadSyncInfo(currentPayload.path);
+			if (imported == null || cachedSyncInfo == null)
+				return;
+
+			EnvironmentImporter.UpdateMarker(currentPayload.path, imported.lastImportedRevision, cachedSyncInfo, Log);
+			EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+			EditorSceneManager.SaveOpenScenes();
+			RefreshLinkedStateFromMarker();
+			if (!string.IsNullOrWhiteSpace(_linkedGameId))
+				Log("Restored this project's missing Plyground marker from its local import cache.");
 		}
 
 		private async Task ImportSelectedTarget()
@@ -959,7 +968,7 @@ namespace Plysync.Editor
 			return info != null;
 		}
 
-		private static SyncBuildInfo BuildSyncInfoFromMarker(SceneMarker marker)
+		private static SyncBuildInfo BuildSyncInfoFromMarker(RuntimeSceneMarker marker)
 		{
 			if (marker == null || string.IsNullOrWhiteSpace(marker.gameId))
 				return null;
